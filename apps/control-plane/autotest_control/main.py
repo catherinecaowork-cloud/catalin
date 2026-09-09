@@ -9,12 +9,16 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from autotest_control.api import router
+from autotest_control.api.router import router
 from autotest_control.compilation_worker import compilation_worker
 from autotest_control.db import init_db
 from autotest_control.settings import settings
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_CONSOLE_INDEX = _STATIC_DIR / "dist" / "index.html"
+def _console_index() -> Path:
+    """React build 产物入口。"""
+    return _CONSOLE_INDEX
 
 
 @asynccontextmanager
@@ -35,6 +39,9 @@ def create_app() -> FastAPI:
 
     app.mount("/artifacts", StaticFiles(directory=settings.artifacts_dir), name="artifacts")
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    dist_assets = _STATIC_DIR / "dist" / "assets"
+    if dist_assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=dist_assets), name="spa-assets")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -42,7 +49,7 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def console() -> FileResponse:
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(_console_index())
 
     @app.get("/favicon.ico")
     def favicon() -> FileResponse:

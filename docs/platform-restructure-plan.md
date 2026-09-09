@@ -123,9 +123,8 @@ apps/control-plane/autotest_control/
   domain/                 ← 领域逻辑，从 api.py 下沉
     batch.py    job_builder.py    redact.py
   static/
-    index.html            ← 只留结构
-    js/                   ← 按模块拆
-      site.js  record.js  run.js  history.js  log.js
+    index.html            ← 过渡期保留；React 上线后改为 build 产物入口
+  web/                    ← 第三步：Vite + React 控制台（见第 5 节第三步）
 
 packages/executor/autotest_executor/
   browser/                ← 只留通用能力
@@ -146,28 +145,58 @@ tests/                    ← selftest 收编，pytest 可跑
 
 三步，顺序不可换。每步**零行为变化**，靠上一步的产物保证安全。
 
-### 第一步：测试网（进行中）
+### 第一步：测试网（已完成）
 
 - [x] 1.1 新增 `tests/`，`pytest tests/` 收编全部 `scripts/selftest_*.py`
 - [x] 1.2 `pyproject.toml` 增加 `[project.optional-dependencies] dev` 与 pytest 配置
 - [x] 1.3 浏览器自测缺 Chromium 时自动 skip；`scripts/run_tests.ps1` 与 `.gitee-ci.yml`
-- [ ] 1.4 逐文件把断言从 scripts 迁到 `tests/test_*.py`（可选，第二步前不阻塞）
+- [ ] 1.4 逐文件把断言从 scripts 迁到 `tests/test_*.py`（可选，不阻塞）
 
-### 第二步：拆边界
+### 第二步：拆边界（已完成）
 
-- `api.py` 按域拆成 `api/` 下多个 router，`api.py` 只做装配
-- 批次状态机、job 构造、脱敏从路由层下沉到 `domain/`
-- 建 `packages/adapters/oinone`，把 Ant/Oinone 选择器搬出内核
+- [x] `api/` 按域拆 router，`router.py` 只做装配（原 `api.py` 已删除）
+- [x] 批次状态机、job 构造、脱敏下沉到 `domain/`
+- [x] 建 `packages/adapters/oinone`，Python 侧 Ant/Oinone 选择器已搬出；JS 注入文件仍含框架特例（后续可继续拆）
 
-**验收**：`pytest` 仍全绿；`api.py` 降到 200 行以内；内核代码里搜不到 `ant-` / `oio-`。
+**验收**：`pytest` 全绿；`api.py` 已移除；Python 内核通过 adapter 引用框架特例。
 
-### 第三步：拆前端
+### 第三步：React 控制台（已完成）
 
-- `index.html` 的 JS 按模块拆到 `static/js/`
-- CSS 独立
-- UI 行为不变
+原方案是拆 `static/js/` 原生模块；**改为 Vite + React SPA**，与定盘「不引入复杂 SaaS 前端」不冲突——仍是内网单机、同一 FastAPI 进程托管静态资源。
 
-**验收**：控制台功能逐项手工过一遍；`index.html` 降到 500 行以内。
+**目录**（建议）：
+
+```
+apps/control-plane/web/          # Vite + React + TypeScript
+  src/
+    api/                         # fetch 封装、SSE 订阅
+    components/                  # 顶栏、侧栏、日志、模态框
+    pages/                       # 运行 / 录制 / 历史 / AI 配置
+  vite.config.ts
+  package.json
+# build 输出 -> autotest_control/static/dist/
+# main.py 的 GET / 改指向 dist/index.html（过渡期可与旧 index 并存）
+```
+
+**迁移顺序**（按使用频率，每步可独立验收）：
+
+1. **壳层**：站点切换、Worker 条、Tab、底栏日志（替代顶栏 + `tabstrip`）
+2. **运行**：流程列表、套件、勾选运行、SSE 直播、批次进度
+3. **录制**：开窗录制、编译、保存为 Flow
+4. **历史**：运行列表、删除、Heal 任务
+5. **AI 配置**、站点接入（踩点）等模态框
+
+**原则**：
+
+- **只调现有 `/api/v1`**，第二步已拆好 router，前端不再碰领域逻辑
+- ~~旧 `index.html` 在对应模块 React 化并验收前**不删**~~ 已删除（2026-09-09），仅保留 `static/dist/`
+- 样式可先搬 CSS 变量/布局，再逐步组件化；不追求与设计系统对齐 Katalon
+
+**验收**：
+
+- `npm run build` 产物由 FastAPI 正常托管，`GET /` 打开 React 控制台
+- 上表 5 个模块功能与现网一致（手工 checklist，同原第三步）
+- `pytest tests/` 仍全绿（后端零行为变化）
 
 ### 之后
 
@@ -178,10 +207,15 @@ tests/                    ← selftest 收编，pytest 可跑
 
 ## 6. 决策记录
 
-### 6.1 不建 Vue 3 控制台
+### 6.1 控制台用 React，不建 Vue 3
 
-P0 提案说 P1 上 Vue 3。**取消**。原生 JS 已经能跑，引入构建链会增加部署复杂度，
-而内网团队版不需要复杂前端。拆文件即可解决多人协作问题。
+P0 提案说 P1 上 Vue 3。**仍不做 Vue**。第三步改为 **Vite + React**（`apps/control-plane/web/`）：
+
+- 与「内网团队版、FastAPI 单进程托管静态文件」兼容：`npm run build` → `static/dist/`
+- 比继续维护 2851 行单文件 `index.html` 更适合多人改 UI
+- 构建链只在前端目录，部署仍是「一个 Python 进程 + 本地 var/」，不引入 Node 运行时
+
+若 React 脚手架尚未落地，**禁止**再往 `static/index.html` 末尾堆新功能；新 UI 只进 `web/`。
 
 ### 6.2 不做对象存储
 
