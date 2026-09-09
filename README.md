@@ -199,13 +199,21 @@ python scripts\selftest_probe.py
 - 失败才留 trace 与录像，通过的运行不留——证据要有，但不能淹没
 - 标签门禁：开窗任务不会派给声明不能开窗的执行器
 
-## 还没做（P0 剩余）
+## 还没做
 
 - L1 接口引擎：导 HAR / OpenAPI 生成用例、变量提取、批量跑
 - 表单登录已实现但未接过真实站点；验证码与 SSO 明确不支持
-- 站点适配器只有 `generic`，框架专用规则（错误提示、加载指示器、空态）还没抽出来
+- 站点适配器只有 `generic`，框架专用规则还没抽出来（`packages/adapters` 未建）
 - 基线比对与 CI 闸门
-- 多租户只是带了字段，隔离规则未落地
-- 生产形态换 Postgres + MinIO（现在是 SQLite + 本地磁盘）
+- 对象库：定位仍贴在每一步上，不能跨用例复用
 
-规格与任务清单在 `openspec/changes/bootstrap-platform-p0/`。
+## 方向与排期
+
+目标形态是**内网团队版**，不是 SaaS。多副本、对象存储、租户隔离已正式取消，
+理由与三步重构排期见 `docs/platform-restructure-plan.md`。
+
+功能线文档：
+
+- `docs/p1.1-recording-plan.md` — 确定性录制回放
+- `docs/p1.2-ai-compiler-plan.md` — AI 编译（录完润色，不改骨架）
+- `docs/p1.2-ai-observer-plan.md` — AI 观察者（认识页面再写脚本）
