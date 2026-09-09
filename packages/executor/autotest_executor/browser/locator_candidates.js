@@ -64,7 +64,7 @@
   const ACTION_HOST_SEL = [
     'button', '[role=button]', '[role=menuitem]',
     'li.ant-menu-item',
-    '.oio-action-item', '[data-action-name]', '.ant-btn',
+    '.oio-action-item', '[data-action-name]', '.ant-btn', '.el-button',
   ].join(',');
 
   const climbToActionable = (el) => {
@@ -152,8 +152,18 @@
 
   const isEphemeralId = (id) => {
     if (!id) return true;
-    return /^(el-id-|rc_select_|rc-menu|form_item_\d)/i.test(id) || /^el-id-\d/.test(id);
+    if (/^(el-id-|rc_select_|rc-menu|form_item_\d)/i.test(id)) return true;
+    if (/^el-id-\d/.test(id)) return true;
+    // vxe-table 单元格包装 div：315ac707-e508-4e63-810d-01f6c53d1df1-0-0
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-\d+-\d+)?$/i.test(id)) {
+      return true;
+    }
+    if (/^\d+[0-9a-f-]{20,}(-\d+-\d+)?$/i.test(id)) return true;
+    return false;
   };
+  const isEphemeralClass = (cls) => (
+    /^(is-focused|is-focus|is-active|is-hover|is-selected|is-disabled|is-checked|ant-select-open|ant-select-focused|ant-picker-focused)$/i.test(cls)
+  );
   const cssPath = (el) => {
     const parts = [];
     let node = el;
@@ -164,7 +174,7 @@
       }
       let part = node.tagName.toLowerCase();
       const cls = Array.from(node.classList || [])
-        .filter((c) => c.length < 25 && !/[0-9a-f]{6,}/i.test(c) && !/iconfont|icon/i.test(c))
+        .filter((c) => c.length < 25 && !/[0-9a-f]{6,}/i.test(c) && !/iconfont|icon/i.test(c) && !isEphemeralClass(c))
         .slice(0, 2);
       if (cls.length) part += '.' + cls.map((c) => CSS.escape(c)).join('.');
       parts.unshift(part);
@@ -218,17 +228,27 @@
 
     const role = roleOverride === undefined ? roleOf(el) : roleOverride;
     const text = visibleText(el);
+    // get_by_label 只认 <label for> / 包裹的 label / aria-label(ledby)。
+    // Oinone 的 <div class="label"> 不在其列，拿它当 label 候选必然空等再漂移。
+    const ariaLabel = ((el.getAttribute && el.getAttribute('aria-label')) || '').trim();
+    const nativeLabel = (ariaLabel || labelOf(el) || '').trim();
     if (role) {
-      const accName = (el.getAttribute('aria-label') || text || el.value || '').trim();
-      if (accName && !ICON_TEXT.test(accName)) {
+      // 输入框不要用 value/段落序号当 accessible name：role=textbox name="1"
+      // 会子串命中「2026-09-09 13:56:43」里的 1，误点到只读日期框。
+      let accName = nativeLabel;
+      if (!accName && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') {
+        accName = (text || '').trim();
+      }
+      if (accName && !ICON_TEXT.test(accName) && !/^\d{1,4}$/.test(accName)) {
         candidates.push({ kind: 'role', value: role, name: accName });
       } else {
         candidates.push({ kind: 'role', value: role, name: null });
       }
     }
 
-    const label = labelOf(el);
-    if (label && label.length < 40 && !ICON_TEXT.test(label)) candidates.push({ kind: 'label', value: label });
+    if (nativeLabel && nativeLabel.length < 40 && !ICON_TEXT.test(nativeLabel)) {
+      candidates.push({ kind: 'label', value: nativeLabel });
+    }
     if (el.placeholder && !/^(请输入|请选择|请填写|搜索)/.test(el.placeholder.trim()) && !/搜索|添加/.test(el.placeholder)) {
       candidates.push({ kind: 'placeholder', value: el.placeholder });
     }
@@ -247,6 +267,20 @@
       candidates.push({ kind: 'css', value: path });
     }
 
+    // 同格标签锚定：弹窗里有好几个日期框时，只有这个能分清交货日期和下单日期。
+    const scoped = inPortal ? null : oinoneScopedSelectors(raw);
+    if (scoped) {
+      for (let i = scoped.selectors.length - 1; i >= 0; i--) {
+        const sel = scoped.selectors[i];
+        if (!candidates.some((c) => c.value === sel)) candidates.unshift({ kind: 'css', value: sel });
+      }
+    }
+
+    const matrix = inPortal ? null : matrixCellOf(raw);
+    if (matrix) {
+      candidates.unshift({ kind: 'matrix', value: matrix.value, name: matrix.table });
+    }
+
     const widget = widgetInfoOf(raw);
     if (widget && widget.name && !inPortal) {
       if (!candidates.some((c) => c.kind === 'field' && c.value === widget.name)) {
@@ -254,6 +288,16 @@
       }
       if (widget.trigger_css && !candidates.some((c) => c.value === widget.trigger_css)) {
         candidates.unshift({ kind: 'css', value: widget.trigger_css });
+      }
+    }
+
+    const placeholderLabel = placeholderClickLabelOf(raw);
+    if (placeholderLabel && !inPortal) {
+      if (!candidates.some((c) => c.kind === 'text' && c.value === placeholderLabel)) {
+        candidates.unshift({ kind: 'text', value: placeholderLabel });
+      }
+      if (!candidates.some((c) => c.kind === 'label' && c.value === placeholderLabel)) {
+        candidates.unshift({ kind: 'label', value: placeholderLabel });
       }
     }
 
@@ -280,6 +324,8 @@
     '.default-dialog',
     '.ant-drawer-content',
     '.el-dialog',
+    '.el-dialog__wrapper',
+    '.el-overlay',
     '.el-overlay-dialog',
     '.oio-modal',
     '.oio-dialog',
@@ -340,10 +386,30 @@
     return html.length > max ? html.slice(0, max) + '…' : html;
   };
 
-  const widgetItemOf = (el) => (
-    closestOf(el, '[data-name]')
-    || closestOf(el, '.oio-form-item, .ant-form-item, .el-form-item, [class*="form-item"]')
-  );
+  const isFieldHost = (node) => {
+    if (!node || !node.getAttribute) return false;
+    const dn = (node.getAttribute('data-name') || '').trim();
+    if (!dn) return false;
+    return !!node.querySelector(
+      '.ant-picker:not(.ant-picker-dropdown), .el-date-editor:not(.el-picker-panel), '
+      + '.ant-select:not(.ant-select-dropdown), .el-select, input, textarea, select, [role=combobox]'
+    );
+  };
+
+  const widgetItemOf = (el) => {
+    const formItem = closestOf(el, '.oio-form-item, .ant-form-item, .el-form-item, [class*="form-item"]');
+    // 最内层的 [data-name] 才是这个控件；再往外是整块表单，认错就会张冠李戴。
+    let best = null;
+    let node = el;
+    for (let i = 0; node && node !== document.body && i < 14; i++) {
+      if (isFieldHost(node)) { best = node; break; }
+      node = parentOf(node);
+    }
+    if (best) return best;
+    if (formItem) return formItem;
+    return closestOf(el, '[data-name]')
+      || closestOf(el, '.oio-form-item, .ant-form-item, .el-form-item, [class*="form-item"]');
+  };
 
   const widgetInfoOf = (el) => {
     if (!el) return null;
@@ -374,12 +440,31 @@
     } else if (combo) {
       kind = 'combobox';
       trigger = closestOf(combo, '.el-select__wrapper, .ant-select-selector') || combo;
+    } else {
+      const antPicker = closestOf(el, '.ant-picker:not(.ant-picker-dropdown)')
+        || (item && item.querySelector('.ant-picker:not(.ant-picker-dropdown)'));
+      const elDate = closestOf(el, '.el-date-editor:not(.el-picker-panel)')
+        || (item && item.querySelector('.el-date-editor:not(.el-picker-panel)'));
+      if (antPicker) {
+        kind = 'ant-date-picker';
+        trigger = antPicker.querySelector('.ant-picker-input') || antPicker;
+      } else if (elDate) {
+        kind = 'el-date-picker';
+        trigger = elDate.querySelector('input') || elDate;
+      }
     }
     let triggerCss = null;
     if (name && kind === 'el-select') triggerCss = `[data-name="${CSS.escape(name)}"] .el-select__wrapper`;
     else if (name && kind === 'ant-select') triggerCss = `[data-name="${CSS.escape(name)}"] .ant-select-selector`;
     else if (name && kind === 'native-select') triggerCss = `[data-name="${CSS.escape(name)}"] select`;
+    else if (name && kind === 'ant-date-picker') triggerCss = `[data-name="${CSS.escape(name)}"] .ant-picker-input input`;
+    else if (name && kind === 'el-date-picker') triggerCss = `[data-name="${CSS.escape(name)}"] .el-date-editor input`;
     else if (name) triggerCss = `[data-name="${CSS.escape(name)}"]`;
+    if (!triggerCss) {
+      // 没有 data-name 的表单（Oinone form-container）改用同格标签当锚点。
+      const scoped = oinoneScopedSelectors(el);
+      if (scoped) triggerCss = scoped.selectors[0];
+    }
     return {
       kind,
       trigger,
@@ -579,6 +664,12 @@
       });
       const top = stack[0];
       if (top) {
+        if (window.__atpLookupTableAction) {
+          for (const node of stack) {
+            const act = window.__atpLookupTableAction(node);
+            if (act) return act;
+          }
+        }
         const inTabChrome = closestOf(top, '.el-tabs__item, .el-tabs__header, .el-tabs__nav, .el-tabs__active-bar');
         if (inTabChrome) {
           for (const node of stack) {
@@ -609,7 +700,56 @@
     return pathNode(e);
   };
 
+  const pickerDateOf = (el) => {
+    if (!el) return null;
+    const cell = closestOf(el, 'td.ant-picker-cell, .ant-picker-cell, .el-date-table td.available');
+    if (!cell || !isShown(cell)) return null;
+    let date = (cell.getAttribute('title') || '').trim();
+    if (!date) {
+      const inner = cell.querySelector('.ant-picker-cell-inner');
+      date = ((inner && inner.getAttribute('title')) || '').trim();
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return { cell, date };
+  };
+
+  const pickerHostOf = (el) => {
+    const panelRoot = closestOf(el, '.ant-picker-dropdown, .el-picker-panel, .el-popper.is-pure');
+    if (!panelRoot) return null;
+    const expandedInputs = Array.from(document.querySelectorAll(
+      '.ant-picker-input input[aria-expanded="true"], .el-date-editor input[aria-expanded="true"]'
+    ));
+    for (const input of expandedInputs) {
+      const controls = input.getAttribute('aria-controls');
+      if (!controls) continue;
+      const linked = document.getElementById(controls);
+      if (linked && (linked === panelRoot || linked.contains(el) || panelRoot.contains(linked))) {
+        return closestOf(input, '.ant-picker:not(.ant-picker-dropdown), .el-date-editor:not(.el-picker-panel)');
+      }
+    }
+    if (expandedInputs.length === 1) {
+      return closestOf(
+        expandedInputs[0],
+        '.ant-picker:not(.ant-picker-dropdown), .el-date-editor:not(.el-picker-panel)'
+      );
+    }
+    const modal = closestOf(el, '.ant-modal-wrap, .oio-modal-wrapper, .el-dialog, .ant-modal-content');
+    if (modal) {
+      const pickers = modal.querySelectorAll(
+        '.ant-picker:not(.ant-picker-dropdown), .el-date-editor:not(.el-picker-panel)'
+      );
+      if (pickers.length === 1) return pickers[0];
+      for (const picker of pickers) {
+        const input = picker.querySelector('input[aria-expanded="true"]');
+        if (input) return picker;
+      }
+    }
+    return null;
+  };
+
   window.__atpComboHost = comboHostOf;
+  window.__atpPickDate = pickerDateOf;
+  window.__atpPickerHost = pickerHostOf;
   window.__atpSelectedChoice = selectedChoiceOf;
   window.__atpFieldSelectHost = fieldSelectHostOf;
   window.__atpIsComboSearch = isComboSearch;
@@ -624,31 +764,129 @@
   window.__atpPanelInfo = panelInfoOf;
   window.__atpScrollContainer = scrollContainerOf;
 
-  const formItemLabel = (el) => {
+  const FIELD_LABEL_MAP = {
+    brand: '品牌',
+    basicProductType: '品类',
+    productColors: '颜色',
+    productSizes: '尺码',
+    productSpecials: '特殊工艺',
+    productCost: '成本',
+    name: '名称',
+    poNo: 'PO号',
+    poNumber: 'PO号',
+    customerOrderNo: '客户单号',
+    orderDate: '下单日期',
+    deliveryDate: '交货日期',
+    productionOrderNo: '生产单号',
+    launchDate: '上市日期',
+    factoryId: '生产工厂',
+    sewingLineId: '缝制线组',
+    customerId: '客户',
+  };
+
+  const BAD_FIELD_LABEL = /^(—|--|-|–|一|请选择日期|请选择|请输入|请填写)$/;
+
+  const cleanFieldLabel = (raw) => {
+    const text = (raw || '').replace(/\*+/g, '').trim().split('\n')[0].trim();
+    if (!text || BAD_FIELD_LABEL.test(text)) return '';
+    return text;
+  };
+
+  // Oinone form-container：必填字段标签常写成「*交货日期」，在控件左侧/前一个兄弟节点。
+  const oinoneStarLabelOf = (el) => {
+    const host = closestOf(
+      el,
+      '.ant-picker, .el-date-editor, .el-select, .ant-select, .ant-input-affix-wrapper, '
+      + '.oio-input, [class*="form-item"], .form-container > div'
+    ) || el;
+    let node = host;
+    for (let i = 0; node && i < 8; i++) {
+      let prev = node.previousElementSibling;
+      while (prev) {
+        const raw = (prev.innerText || '').trim().split('\n')[0].trim();
+        if (/^\*[\u4e00-\u9fffA-Za-z0-9/（）()-]{1,16}$/.test(raw)) {
+          return cleanFieldLabel(raw);
+        }
+        const plain = cleanFieldLabel(raw);
+        if (plain && plain.length >= 2 && plain.length <= 12 && /^[\u4e00-\u9fff]/.test(plain)) {
+          return plain;
+        }
+        if (prev.querySelector('input, textarea, select, .ant-picker, .el-date-editor, .el-select, .ant-select')) {
+          break;
+        }
+        prev = prev.previousElementSibling;
+      }
+      node = parentOf(node);
+    }
+    return null;
+  };
+
+  const nearestRowLabelOf = (el) => {
+    const row = closestOf(el, '.form-row, .oio-row, .ant-row, tr, [class*="form-item"]');
+    if (!row) return null;
+    const cells = Array.from(row.children);
+    if (!cells.length) return null;
+    let host = el;
+    while (host && host !== row && !cells.includes(host)) host = parentOf(host);
+    const idx = host && host !== row ? cells.indexOf(host) : -1;
+    const start = idx >= 0 ? idx - 1 : cells.length - 1;
+    for (let i = start; i >= 0; i--) {
+      const cell = cells[i];
+      if (cell.contains(el)) continue;
+      if (cell.querySelector(
+        'input, textarea, select, .el-select, .ant-select, .ant-picker, .el-date-editor, [role=combobox]'
+      )) continue;
+      const t = cleanFieldLabel(cell.innerText);
+      if (!t || t.length > 24) continue;
+      return t;
+    }
+    return null;
+  };
+
+  const nearbyLabelOf = (el) => {
+    if (!el) return null;
     const item = widgetItemOf(el)
-      || closestOf(el, '.ant-form-item, .el-form-item, .oio-form-item, [class*="form-item"]');
+      || closestOf(el, '.form-container, .form-row, .oio-row, .ant-row, tr, .ant-form-item, .el-form-item, .oio-form-item, [class*="form-item"]');
     if (!item) return null;
     const lab = item.querySelector(
-      'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
+      'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, '
+      + '[class*="form-item-label"], [class*="field-label"], .field-name, .form-label, th'
     );
-    let raw = ((lab && lab.innerText) || '').trim().split('\n')[0];
+    let raw = cleanFieldLabel(lab && lab.innerText);
     if (!raw) {
       const prev = item.previousElementSibling;
       if (prev && (/label/i.test(String(prev.className || '')) || prev.tagName === 'LABEL')) {
-        raw = ((prev && prev.innerText) || '').trim().split('\n')[0];
+        raw = cleanFieldLabel(prev.innerText);
       }
     }
-    if (!raw) {
-      const named = item.getAttribute && item.getAttribute('data-name');
-      if (named === 'brand') raw = '品牌';
-      else if (named === 'basicProductType') raw = '品类';
-      else if (named === 'productColors') raw = '颜色';
-      else if (named === 'productSizes') raw = '尺码';
-      else if (named === 'productSpecials') raw = '特殊工艺';
-      else if (named === 'productCost') raw = '成本';
-      else if (named === 'name') raw = '名称';
+    if (!raw) raw = nearestRowLabelOf(el) || '';
+    if (!raw && el.getAttribute) {
+      const labelledBy = el.getAttribute('aria-labelledby');
+      if (labelledBy) {
+        const ref = document.getElementById(labelledBy);
+        raw = cleanFieldLabel(ref && ref.innerText);
+      }
     }
-    return raw ? raw.replace(/\*+/g, '').trim() : null;
+    if (!raw && el.placeholder) {
+      const ph = el.placeholder.trim();
+      if (ph && !/^(请输入|请选择|请填写)$/.test(ph)) raw = ph;
+    }
+    return raw || null;
+  };
+
+  const formItemLabel = (el) => {
+    const item = widgetItemOf(el);
+    const named = item && item.getAttribute && item.getAttribute('data-name');
+    if (named) {
+      const mapped = FIELD_LABEL_MAP[named] || named;
+      if (mapped && !BAD_FIELD_LABEL.test(mapped)) return cleanFieldLabel(mapped);
+    }
+    const wrap = oinoneFieldWrapOf(el);
+    if (wrap && wrap.label) return wrap.label;
+    const oinone = oinoneStarLabelOf(el);
+    if (oinone) return oinone;
+    const raw = nearbyLabelOf(el);
+    return raw ? cleanFieldLabel(raw) : null;
   };
 
   const fieldRequiredOf = (el) => {
@@ -697,6 +935,141 @@
     return best;
   };
 
+  // Oinone form-container 一格长这样，标签和控件是亲兄弟：
+  //   <div style="width:25%"><div class="label">*交货日期</div><div class="ant-picker">…</div></div>
+  // 只认这一层的 .label。顺着 DOM 往外捞会捡到隔壁字段，回放就点到「下单日期」。
+  const OINONE_LABEL_SEL = '.label, .field-label, [class*="form-label"]';
+
+  const oinoneFieldWrapOf = (el) => {
+    let node = el;
+    for (let i = 0; node && node !== document.body && i < 10; i++) {
+      const parent = parentOf(node);
+      if (!parent || !parent.children) { node = parent; continue; }
+      for (const child of Array.from(parent.children)) {
+        if (child === node || !child.matches) continue;
+        if (child.contains(el) || !child.matches(OINONE_LABEL_SEL)) continue;
+        const text = cleanFieldLabel(child.innerText);
+        if (!text || text.length > 24) continue;
+        const labelSel = child.classList && child.classList.contains('label')
+          ? '.label'
+          : '[class*="label"]';
+        return { wrap: parent, label: text, labelSel };
+      }
+      node = parent;
+    }
+    return null;
+  };
+
+  // 控件尾缀：锚到标签之后还要指到真正能点的那个节点。
+  const CONTROL_TAIL = [
+    ['.ant-picker:not(.ant-picker-dropdown)', '.ant-picker-input input'],
+    ['.el-date-editor:not(.el-picker-panel)', '.el-date-editor input'],
+    ['.ant-select:not(.ant-select-dropdown)', '.ant-select-selector'],
+    ['.el-select', '.el-select__wrapper'],
+    ['textarea', 'textarea'],
+    ['input', 'input'],
+  ];
+
+  const oinoneScopedSelectors = (el) => {
+    const hit = oinoneFieldWrapOf(el);
+    if (!hit) return null;
+    const name = hit.label.replace(/["\\]/g, '').trim();
+    if (!name) return null;
+    let tail = '';
+    for (const [probe, sel] of CONTROL_TAIL) {
+      if (hit.wrap.querySelector(probe)) { tail = ' ' + sel; break; }
+    }
+    return {
+      label: hit.label,
+      selectors: [
+        `div:has(> ${hit.labelSel}:text-is("${name}"))${tail}`,
+        `div:has(> ${hit.labelSel}:has-text("${name}"))${tail}`,
+      ],
+    };
+  };
+
+  window.__atpOinoneScoped = oinoneScopedSelectors;
+
+  // 颜色×尺码矩阵：列头是动态尺码、单元格 id 是 vxe 随机 uuid，只能记「行×列」。
+  const matrixCellOf = (el) => {
+    const input = closestOf(el, 'input.vxe-input--inner, textarea, input') || el;
+    if (!input || !input.tagName || (input.tagName !== 'INPUT' && input.tagName !== 'TEXTAREA')) {
+      return null;
+    }
+    const cell = closestOf(input, 'td, th');
+    if (!cell) return null;
+    const row = closestOf(cell, 'tr');
+    let table = closestOf(row, 'table');
+    if (!table && row && row.closest) {
+      const wrap = row.closest('.vxe-table--body-wrapper, .vxe-table, .el-table__body');
+      if (wrap && wrap.querySelector) table = wrap.querySelector('table');
+    }
+    if (!row || !table) return null;
+
+    const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
+    if (!headerRow) return null;
+    const headerCells = Array.from(headerRow.querySelectorAll('th, td'));
+    if (headerCells.length < 3) return null;
+
+    const tableTitle = cleanFieldLabel(headerCells[0].innerText) || '颜色尺码';
+    const sizeHeaders = headerCells.slice(1).filter((node) => /^\d{1,4}$/.test(cleanFieldLabel(node.innerText)));
+    if (sizeHeaders.length < 2 && !/颜色|尺码/.test(tableTitle)) return null;
+
+    const rowCells = Array.from(row.querySelectorAll('td, th'));
+    const cellIdx = rowCells.indexOf(cell);
+    if (cellIdx <= 0) return null;
+
+    const rowLabel = cleanFieldLabel(rowCells[0].innerText);
+    if (!rowLabel || rowLabel === '合计' || rowLabel === tableTitle) return null;
+
+    const colLabel = cleanFieldLabel((headerCells[cellIdx] && headerCells[cellIdx].innerText) || '');
+    if (!colLabel || colLabel === '合计') return null;
+
+    return {
+      table: tableTitle,
+      row: rowLabel,
+      col: colLabel,
+      value: `${rowLabel}|${colLabel}`,
+    };
+  };
+
+  window.__atpMatrixCell = matrixCellOf;
+
+  const sectionTitleOf = (section) => {
+    if (!section) return null;
+    const heading = section.querySelector(
+      'h1, h2, h3, h4, legend, .section-title, [class*="section-title"], [class*="form-section-title"]'
+    );
+    let raw = cleanFieldLabel((heading && heading.innerText) || '');
+    if (!raw) {
+      const first = (section.innerText || '').trim().split('\n')[0].trim();
+      raw = cleanFieldLabel(first.replace(/^\d+\.\s*/, ''));
+    }
+    if (!raw) return null;
+    raw = raw.replace(/信息$/, '').trim();
+    if (!raw) return null;
+    if (/加号/.test(raw)) return raw;
+    return `${raw}加号`;
+  };
+
+  const placeholderClickLabelOf = (el) => {
+    if (!el) return null;
+    const placeholder = closestOf(el, '.empty-placeholder, [class*="empty-placeholder"]');
+    const infoWrap = closestOf(el, '.info-wrap, [class*="info-wrap"]');
+    if (!placeholder && !infoWrap) return null;
+    const host = placeholder || infoWrap;
+    const section = closestOf(host, 'section.form-section, .form-section, [class*="form-section"]');
+    const titled = sectionTitleOf(section);
+    if (titled) return titled;
+    const hasPlus = host.querySelector(
+      '.anticon-plus, .el-icon-plus, [class*="icon-plus"], [aria-label="plus"], [aria-label="Plus"]'
+    );
+    if (placeholder || hasPlus) return '加号';
+    return null;
+  };
+
+  window.__atpPlaceholderLabel = placeholderClickLabelOf;
+
   // 每次点击当场爬当前 DOM，不缓存上一次录制的结构。
   const crawlDom = (el) => {
     const portal = closestOf(el, PORTAL_SEL);
@@ -725,7 +1098,7 @@
       node = parentOf(node);
     }
     chain.reverse();
-    const field = formItemLabel(el) || labelOf(el);
+    const field = placeholderClickLabelOf(el) || formItemLabel(el) || labelOf(el);
     const modalRoot = nested || liveModals[liveModals.length - 1] || null;
     let name = overlayTitle(root);
     if (kind === 'dropdown') {
@@ -757,11 +1130,13 @@
     const row = el.closest('tr');
     const info = widgetInfoOf(el);
     const panel = panelInfoOf(el);
+    const matrix = matrixCellOf(el);
     let widget = (info && info.kind) || null;
     if (!widget && el.tagName === 'SELECT') widget = 'native-select';
     return {
       dialog: crawl.overlay_name,
-      label: crawl.label || (info && info.item && formItemLabel(el)) || labelOf(el),
+      label: (matrix && `${matrix.table} ${matrix.row}×${matrix.col}`)
+        || placeholderClickLabelOf(el) || crawl.label || (info && info.item && formItemLabel(el)) || labelOf(el),
       in_table_row: !!row,
       page_title: document.title,
       url: location.href,

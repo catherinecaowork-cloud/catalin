@@ -1,10 +1,15 @@
-import type { EditorTab, Worker } from "../../types";
+import { Clock, Play } from "lucide-react";
+
+import type { EditorTab, ModuleKind, Worker } from "../../types";
 import { MODULES } from "../../types";
 import { parseRecTabId, parseRunTabId } from "../../utils/tabs";
-import { EditorEmpty, EditorLayout, EditorPlaceholder, EditorView } from "../layout/EditorLayout";
+import { ModuleToolbar, ModuleToolbarGroup, ModuleToolbarLabel } from "../patterns/ModuleToolbar";
+import { EditorLayout, EditorPlaceholder, EditorView } from "../layout/EditorLayout";
+import { StartPage } from "../layout/StartPage";
 import { RecordEditorBody } from "../record/RecordEditorBody";
 import { RunWorkspace } from "../run/RunWorkspace";
-import { BottomLog } from "../BottomLog";
+import { BottomPanelProvider } from "../../context/BottomPanelContext";
+import { BottomPanel } from "../layout/BottomPanel";
 
 type Props = {
   activeTab: EditorTab | null;
@@ -16,6 +21,8 @@ type Props = {
   logLines: string[];
   logOpen: boolean;
   onClearLog: () => void;
+  onToggleLog: () => void;
+  onOpenModule: (kind: ModuleKind) => void;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onFollowBatch: (runId: string, title: string) => void;
   onRunEnd?: () => void;
@@ -24,7 +31,15 @@ type Props = {
 function ModulePlaceholder({ tab }: { tab: EditorTab }) {
   if (tab.kind === "run") {
     return (
-      <EditorView toolbar="运行 · 选择流程并点击「运行所选流程」" color="var(--c-run)">
+      <EditorView
+        toolbar={
+          <ModuleToolbar color="var(--c-run)">
+            <ModuleToolbarGroup>
+              <ModuleToolbarLabel icon={Play}>选择流程并运行</ModuleToolbarLabel>
+            </ModuleToolbarGroup>
+          </ModuleToolbar>
+        }
+      >
         <EditorPlaceholder text="在左侧选中脚本，配置选项后启动回放。" />
       </EditorView>
     );
@@ -32,7 +47,15 @@ function ModulePlaceholder({ tab }: { tab: EditorTab }) {
 
   if (tab.kind === "history") {
     return (
-      <EditorView toolbar="历史 · 点击左侧记录打开详情" color="var(--c-history)">
+      <EditorView
+        toolbar={
+          <ModuleToolbar color="var(--c-history)">
+            <ModuleToolbarGroup>
+              <ModuleToolbarLabel icon={Clock}>点击左侧记录打开详情</ModuleToolbarLabel>
+            </ModuleToolbarGroup>
+          </ModuleToolbar>
+        }
+      >
         <EditorPlaceholder text="从列表点一条运行记录，在主区域查看步骤与截图。" />
       </EditorView>
     );
@@ -40,8 +63,15 @@ function ModulePlaceholder({ tab }: { tab: EditorTab }) {
 
   return (
     <EditorView
-      toolbar={`${MODULES[tab.kind].title} · ${tab.title}`}
-      color={MODULES[tab.kind].color}
+      toolbar={
+        <ModuleToolbar color={MODULES[tab.kind].color}>
+          <ModuleToolbarGroup>
+            <ModuleToolbarLabel>
+              {MODULES[tab.kind].title} · {tab.title}
+            </ModuleToolbarLabel>
+          </ModuleToolbarGroup>
+        </ModuleToolbar>
+      }
     >
       <EditorPlaceholder text={MODULES[tab.kind].description} />
     </EditorView>
@@ -58,19 +88,15 @@ export function AppEditor({
   logLines,
   logOpen,
   onClearLog,
+  onToggleLog,
+  onOpenModule,
   onLog,
   onFollowBatch,
   onRunEnd,
 }: Props) {
   const body = (() => {
     if (!activeTab) {
-      return (
-        <EditorEmpty
-          title="自动化测试平台"
-          subtitle="React 控制台"
-          hint="先选站点，再打开录制、运行或历史。"
-        />
-      );
+      return <StartPage onOpenModule={onOpenModule} />;
     }
 
     const runId = activeRunId ?? parseRunTabId(activeTab.id);
@@ -104,8 +130,19 @@ export function AppEditor({
   })();
 
   return (
-    <EditorLayout footer={<BottomLog lines={logLines} open={logOpen} onClear={onClearLog} />}>
-      {body}
-    </EditorLayout>
+    <BottomPanelProvider>
+      <EditorLayout
+        footer={
+          <BottomPanel
+            lines={logLines}
+            open={logOpen}
+            onClear={onClearLog}
+            onToggle={onToggleLog}
+          />
+        }
+      >
+        {body}
+      </EditorLayout>
+    </BottomPanelProvider>
   );
 }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 LIVE_MODAL = (
     ".ant-modal-wrap.oio-modal-wrapper, "
     ".oio-modal-wrapper, "
@@ -344,11 +346,64 @@ OVERLAY_WAIT_VISIBLE = (
 
 DROPDOWN_OPTION_MARKERS = ("ant-select-item-option", "el-select-dropdown__item")
 SELECT_TRIGGER_MARKERS = ("el-select__wrapper", "ant-select-selector")
+_EPHEMERAL_CSS_STATE = (
+    "is-focused",
+    "is-focus",
+    "is-active",
+    "is-hover",
+    "is-selected",
+    "is-disabled",
+    "is-checked",
+    "ant-select-open",
+    "ant-select-focused",
+    "ant-picker-focused",
+)
+
+
+def sanitize_css_selector(value: str) -> str:
+    """去掉录制瞬间的状态 class（如 is-focused），避免回放时对不上。"""
+    out = value
+    for cls in _EPHEMERAL_CSS_STATE:
+        out = out.replace(f".{cls}", "")
+    out = re.sub(r"\.(?=[\s,>|]|$)", "", out)
+    return out
+DATE_PICKER_MARKERS = ("ant-picker-cell", "ant-picker-dropdown", "el-date-table", "el-date-editor")
+PICKER_PANEL_VISIBLE = ".ant-picker-dropdown:visible, .el-picker-panel:visible"
+DATE_PICKER_WIDGETS = frozenset({"ant-date-picker", "el-date-picker"})
 DROPDOWN_WIDGETS = frozenset({"el-select", "ant-select", "combobox"})
+
+# Oinone data-name → 界面中文名。录制/编译/观察者共用。
+FIELD_LABELS: dict[str, str] = {
+    "brand": "品牌",
+    "basicProductType": "品类",
+    "productColors": "颜色",
+    "productSizes": "尺码",
+    "productSpecials": "特殊工艺",
+    "productCost": "成本",
+    "name": "名称",
+    "poNo": "PO号",
+    "poNumber": "PO号",
+    "customerOrderNo": "客户单号",
+    "orderDate": "下单日期",
+    "deliveryDate": "交货日期",
+    "productionOrderNo": "生产单号",
+    "launchDate": "上市日期",
+    "factoryId": "生产工厂",
+    "sewingLineId": "缝制线组",
+    "customerId": "客户",
+}
+
+
+def field_label(name: str) -> str:
+    return FIELD_LABELS.get(name, name)
 
 
 def looks_like_dropdown_option(value: str) -> bool:
     return any(marker in value for marker in DROPDOWN_OPTION_MARKERS)
+
+
+def looks_like_picker_date(value: str) -> bool:
+    return any(marker in value for marker in DATE_PICKER_MARKERS)
 
 
 def is_select_trigger_css(value: str) -> bool:

@@ -49,10 +49,55 @@ export function RecordSidebar() {
   }
 
   if (ctx.stage === "busy") {
-    return <ModuleHint>录制进行中。在浏览器里操作，完成后点「结束录制」。</ModuleHint>;
+    return (
+      <>
+        <ModuleHint>录制进行中。在浏览器里操作，完成后点「结束录制」。</ModuleHint>
+        {ctx.observedEntries.length ? (
+          <div className="observed-fields">
+            <Muted>已认识 {ctx.observedEntries.length} 个字段/组件</Muted>
+            <ul className="observed-fields-list">
+              {ctx.observedEntries.map((entry) => (
+                <li key={entry.id}>
+                  <strong>{entry.display_name}</strong>
+                  <span>
+                    {entry.widget_kind} · {entry.value_strategy === "choose_any" ? "任选" : "参数化"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <Muted>观察者正在认识页面字段…</Muted>
+        )}
+      </>
+    );
   }
 
-  return <ModuleHint>核对步骤后保存为流程草稿。可在主区域编辑每一步。</ModuleHint>;
+  const canToggleScripts = ctx.sampleSteps.length > 0 && ctx.observerSteps.length > 0;
+
+  return (
+    <>
+      <ModuleHint>
+        当前路径：<strong>{ctx.compilePath}</strong>。默认展示观察者脚本，可切换查看样例轨迹。
+      </ModuleHint>
+      {canToggleScripts ? (
+        <div className="script-source-toggle">
+          <Button
+            variant={ctx.scriptSource === "observer" ? "primary" : "ghost"}
+            onClick={() => ctx.switchScriptSource("observer")}
+          >
+            观察者脚本 ({ctx.observerSteps.length})
+          </Button>
+          <Button
+            variant={ctx.scriptSource === "sample" ? "primary" : "ghost"}
+            onClick={() => ctx.switchScriptSource("sample")}
+          >
+            样例轨迹 ({ctx.sampleSteps.length})
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export function RecordSidebarFoot() {
@@ -95,12 +140,16 @@ export function RecordSidebarFoot() {
       {ctx.notes.map((note, index) => (
         <Alert key={index}>{note}</Alert>
       ))}
+      <Muted>编写路径：{ctx.compilePath}</Muted>
       <Button variant="ghost" onClick={() => void ctx.retryCompile()}>
-        重新编译
+        重新观察者编写
+      </Button>
+      <Button variant="ghost" style={{ marginTop: 8 }} onClick={() => void ctx.retryPolishCompile()}>
+        走润色编译
       </Button>
       {showFallback ? (
         <Button variant="ghost" style={{ marginTop: 8 }} onClick={() => void ctx.useFallbackSteps()}>
-          采用确定性步骤
+          采用样例轨迹
         </Button>
       ) : null}
       <Field label="流程名称">

@@ -38,6 +38,7 @@ from autotest_control.deps import (
     new_id,
     now,
 )
+from autotest_control.domain.observer import load_site_widget_models, model_to_dict
 from autotest_control.domain.credentials import (
     copy_project_form_locators,
     form_login_locators,
@@ -102,6 +103,7 @@ from autotest_control.schemas import (
     FlowSetupUpdate,
     FlowStatusUpdate,
     HealTaskOut,
+    PageWidgetModelOut,
     HeartbeatIn,
     InspectIn,
     OnboardCommitIn,
@@ -167,6 +169,15 @@ def list_sites(scope: Scope = Depends(get_scope), session: Session = Depends(get
         )
         for row in rows
     ]
+
+@router.get("/sites/{site_id}/page-widget-models", response_model=PageWidgetModelOut)
+def get_site_page_widget_models(
+    site_id: str, scope: Scope = Depends(get_scope), session: Session = Depends(get_session)
+) -> PageWidgetModelOut:
+    get_site(session, scope, site_id)
+    model = load_site_widget_models(session, scope, site_id)
+    return PageWidgetModelOut.model_validate(model_to_dict(model))
+
 
 @router.delete("/sites/{site_id}")
 def delete_site(site_id: str, scope: Scope = Depends(get_scope), session: Session = Depends(get_session)) -> dict[str, Any]:

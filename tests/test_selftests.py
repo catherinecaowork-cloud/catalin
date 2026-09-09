@@ -23,6 +23,8 @@ BROWSER_SELFTESTS = frozenset(
         "selftest_probe.py",
         "selftest_optional_skip.py",
         "selftest_choose_fallback.py",
+        "selftest_field_anchor.py",
+        "selftest_matrix_grid.py",
     }
 )
 

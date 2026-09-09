@@ -83,7 +83,7 @@ def _target(spec: Any) -> Target:
         candidates = [
             Candidate(kind=kind, value=value)  # type: ignore[arg-type]
             for kind, value in spec.items()
-            if kind in {"testid", "field", "role", "label", "placeholder", "text", "css"}
+            if kind in {"testid", "field", "matrix", "role", "label", "placeholder", "text", "css"}
         ]
         if candidates:
             return Target(candidates=candidates)

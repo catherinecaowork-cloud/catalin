@@ -31,7 +31,11 @@
   const selectOption = (el) => (window.__atpSelectOption ? window.__atpSelectOption(el) : null);
   const selectTag = (el) => (window.__atpSelectTag ? window.__atpSelectTag(el) : null);
   const selectTab = (el) => (window.__atpSelectTab ? window.__atpSelectTab(el) : null);
+  const pickDate = (el) => (window.__atpPickDate ? window.__atpPickDate(el) : null);
+  const pickerHost = (el) => (window.__atpPickerHost ? window.__atpPickerHost(el) : null);
   const eventEl = (e) => (window.__atpDeepNode ? window.__atpDeepNode(e) : e.target);
+  let lastPickerHost = null;
+  let lastPickerHostTs = 0;
 
   // ---------------------------------------------------------------- 输入合并
   // 每敲一个字符一个 input 事件。不合并的话，填「款式A」会录成三步。
@@ -62,9 +66,111 @@
   let lastComboInfo = { widget: null, panel: null, trigger_css: null };
   let lastClickKey = '';
   let lastClickTs = 0;
-  let lastActionDownTs = 0;
-  const ACTION_SEL = 'button, [role=button], [role=menuitem], .oio-action-item, [data-action-name], .ant-btn';
+  let lastEarlyDownKey = '';
+  let lastEarlyDownTs = 0;
+  let lastClosingDownTs = 0;
+  const ACTION_SEL = 'button, [role=button], [role=menuitem], .oio-action-item, [data-action-name], .ant-btn, .el-button';
   const ACTION_TEXT = /^(保存|提交|确定|确认|取消|Save|OK|Submit)$/i;
+  const OVERLAY_SEL = [
+    '[role=dialog]',
+    'dialog[open]',
+    '.oio-modal-wrapper',
+    '.ant-modal-wrap',
+    '.ant-modal-content',
+    '.ant-modal',
+    '.ant-modal-root',
+    '.default-dialog',
+    '.ant-drawer-content',
+    '.el-dialog',
+    '.el-dialog__wrapper',
+    '.el-overlay',
+    '.el-overlay-dialog',
+    '.oio-modal',
+    '.oio-dialog',
+  ].join(',');
+  const TABLE_SEL = '.el-table, .ant-table, table, [class*="el-table"], [class*="table-body"]';
+  const TABLE_ACTION_TEXT = /^(带回|选择|确定|查看|编辑|删除|详情)$/i;
+
+  const clickKeyOf = (el) => {
+    if (!el) return '';
+    const text = (el.innerText || '').trim().slice(0, 40);
+    return `${el.tagName || ''}|${text}`;
+  };
+
+  const inOverlay = (el) => !!(el && el.closest && el.closest(OVERLAY_SEL));
+
+  const tableActionText = (node) => ((node && node.innerText) || '').trim().split('\n')[0].trim();
+
+  // Oinone 款式 lookup：td.el-table__cell 内 button.el-button.is-link（带回）
+  const lookupTableActionEl = (el) => {
+    if (!el || !el.closest) return null;
+    const cell = el.closest('td.el-table__cell, .el-table__cell');
+    let btn = el.closest('button.el-button, button, a, .ant-btn, .ant-btn-link');
+    if (cell) {
+      if (!btn || !cell.contains(btn)) {
+        btn = cell.querySelector('button.el-button, button, a, .ant-btn');
+      }
+    }
+    if (!btn) {
+      btn = el.closest(
+        'td.el-table__cell button, .el-table .el-button, .el-table button, .ant-table button, table button'
+      );
+    }
+    if (!btn) return null;
+    const inTable = btn.closest('td.el-table__cell, .el-table__cell, .el-table, .ant-table, table, .el-table__body');
+    if (!inTable) return null;
+    const text = tableActionText(btn);
+    if (!text || text.length > 12 || !TABLE_ACTION_TEXT.test(text)) return null;
+    return btn;
+  };
+
+  const overlayActionEl = (el) => {
+    const lookup = lookupTableActionEl(el);
+    if (lookup) return lookup;
+    if (!el || !el.closest) return null;
+    const overlay = el.closest(OVERLAY_SEL);
+    if (!overlay) return null;
+    let node = el;
+    for (let depth = 0; node && node !== overlay && depth < 8; depth++) {
+      if (!node.tagName) {
+        node = node.parentElement;
+        continue;
+      }
+      const text = tableActionText(node);
+      if (text && text.length <= 12 && TABLE_ACTION_TEXT.test(text)) {
+        const host = node.closest('button, .el-button, a, .ant-btn, .ant-btn-link') || node;
+        return host;
+      }
+      const inTable = node.closest && node.closest(TABLE_SEL);
+      if (inTable) {
+        const link = node.closest('a, .ant-btn-link, .el-button, button, [role=button]') || node;
+        const linkText = tableActionText(link);
+        if (
+          linkText && linkText.length <= 12 && TABLE_ACTION_TEXT.test(linkText)
+          && (link.tagName === 'A' || link.tagName === 'BUTTON' || link.closest('.ant-btn-link, .el-button'))
+        ) {
+          return link;
+        }
+      }
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const isClosingAction = (el) => {
+    if (!el) return false;
+    const text = ((el.innerText || '').trim().split('\n')[0] || '');
+    return ACTION_TEXT.test(text);
+  };
+
+  // 只提前录两类：lookup「带回」、保存/确定（会关弹窗）。
+  // 不要把所有 button（如新增PO）都拦到 mousedown，否则会和后续 click 互相干扰。
+  const resolveCaptureEl = (el) => {
+    const lookup = lookupTableActionEl(el);
+    if (lookup) return lookup;
+    if (isClosingAction(el)) return el.closest(ACTION_SEL) || el;
+    return null;
+  };
 
   const fromBadge = (e) => {
     if (inBadge(e && e.target)) return true;
@@ -227,6 +333,46 @@
     return true;
   };
 
+  const resolvePickerHost = (el) => {
+    const now = Date.now();
+    if (lastPickerHost && now - lastPickerHostTs < 30_000) {
+      const activeInput = lastPickerHost.querySelector('.ant-picker-input input, .el-date-editor input');
+      if (activeInput && activeInput.getAttribute('aria-expanded') === 'true') {
+        return lastPickerHost;
+      }
+    }
+    return pickerHost(el) || lastPickerHost;
+  };
+
+  const emitDateFill = (dateHit, el) => {
+    const host = resolvePickerHost(el);
+    if (!host) return false;
+    const trigger = (host.querySelector && host.querySelector('.ant-picker-input input, .el-date-editor input')) || host;
+    const context = contextOf(host);
+    const info = widgetOf(host) || {};
+    const target = decorateTarget(host, describe(host) || describe(trigger), {
+      context,
+      inheritCombo: false,
+      widget: info.kind,
+      trigger_css: info.trigger_css,
+    });
+    if (!target) return false;
+    const now = Date.now();
+    const key = 'date|' + dateHit.date;
+    if (key === lastChooseKey && now - lastChooseTs < 800) return true;
+    lastChooseKey = key;
+    lastChooseTs = now;
+    flushInput();
+    emit({
+      type: 'fill',
+      target,
+      context: { ...context, widget: info.kind, trigger_css: info.trigger_css },
+      value: dateHit.date,
+      text: dateHit.date,
+    });
+    return true;
+  };
+
   const emitPanelClick = (el, text) => {
     const title = (text || optionTitle(el) || '').trim();
     if (!title) return false;
@@ -306,6 +452,25 @@
     }
   }, opts);
 
+  const tryEarlyCapture = (e) => {
+    if (fromBadge(e)) return;
+    const el = eventEl(e);
+    if (inBadge(el) || !el) return;
+    const captureEl = resolveCaptureEl(el);
+    if (!captureEl) return;
+    const lookupAct = lookupTableActionEl(el);
+    // lookup「带回」在 el-popper 里也要录；保存/确定仍跳过下拉内误触
+    if (!lookupAct && (inDropdown(el) || comboHost(el) || fieldSelectHost(el))) return;
+    if (emitPlainClick(captureEl)) {
+      lastEarlyDownKey = clickKeyOf(captureEl);
+      lastEarlyDownTs = Date.now();
+      if (isClosingAction(captureEl)) lastClosingDownTs = Date.now();
+    }
+  };
+
+  // capture：业务关弹窗前记下「带回 / 保存」（日期改动前「带回」靠普通 click，这里只补关层场景）
+  document.addEventListener('mousedown', tryEarlyCapture, { capture: true, passive: true });
+
   document.addEventListener('mousedown', (e) => {
     if (fromBadge(e)) return;
     const el = eventEl(e);
@@ -321,23 +486,21 @@
       emitChooseFromOption(option);
       return;
     }
-    // 保存会关掉弹窗：等 click 时坐标下已是页面顶栏，必须在按下时记下按钮。
-    if (
-      isActionControl(el)
-      && !inDropdown(el)
-      && !comboHost(el)
-      && !fieldSelectHost(el)
-    ) {
-      if (emitPlainClick(el)) lastActionDownTs = Date.now();
-    }
   }, opts);
 
   document.addEventListener('click', (e) => {
     if (fromBadge(e)) return;
-    // 弹窗已关后的穿透点击（例如落到「超级管理员」）不要再录一步
-    if (Date.now() - lastActionDownTs < 700) return;
     let el = eventEl(e);
     if (inBadge(el) || !el) return;
+    const lookupAct = lookupTableActionEl(el);
+    if (lookupAct) {
+      const lk = clickKeyOf(lookupAct);
+      if (lk === lastEarlyDownKey && Date.now() - lastEarlyDownTs < 700) return;
+      emitPlainClick(lookupAct);
+      return;
+    }
+    // 仅保存/确定后拦穿透 click，不因「新增PO→带回」快慢丢弃任何 click
+    if (lastClosingDownTs && Date.now() - lastClosingDownTs < 400 && !inOverlay(el)) return;
     // 输入框内的点击紧接着往往是输入，Python 侧会把这类点击去掉
     flushInput();
     if (el.tagName === 'CANVAS' || (el.closest && el.closest('canvas'))) {
@@ -367,6 +530,16 @@
       emitComboOpen(fieldHost);
       return;
     }
+    const dateHit = pickDate(el);
+    if (dateHit && emitDateFill(dateHit, el)) return;
+    const pickerCtl = (el.closest && (
+      el.closest('.ant-picker:not(.ant-picker-dropdown)')
+      || el.closest('.el-date-editor:not(.el-picker-panel)')
+    )) || null;
+    if (pickerCtl && !inDropdown(el)) {
+      lastPickerHost = pickerCtl;
+      lastPickerHostTs = Date.now();
+    }
     emitPlainClick(el);
   }, opts);
 
@@ -392,11 +565,24 @@
 
   let pendingScroll = null;
   let scrollTimer = null;
+  const shouldSkipScroll = (el) => {
+    if (!el) return true;
+    if (inDropdown(el)) return true;
+    const cls = String((el.className || '')).toLowerCase();
+    if (/el-select-dropdown|select-options|select-body|ant-select-dropdown|el-scrollbar__wrap/.test(cls)) {
+      return true;
+    }
+    return !!(el.closest && el.closest(
+      '.el-select-dropdown, .ant-select-dropdown, .select-options, .select-body, .el-popper.el-select__popper'
+    ));
+  };
+
   const flushScroll = () => {
     if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = null; }
     if (!pendingScroll) return;
     const { el, top } = pendingScroll;
     pendingScroll = null;
+    if (shouldSkipScroll(el)) return;
     const context = contextOf(el);
     const target = decorateTarget(el, describe(el), { context, inheritCombo: false });
     if (!target) return;
@@ -467,10 +653,81 @@
   // 单页应用可能整块重绘 body，掉了就补回来
   setInterval(mountBadge, 1000);
 
+  window.__atpLookupTableAction = lookupTableActionEl;
   window.__atpRecorder = {
+    version: '2026-09-09-matrix-grid',
     setCount: (n) => {
       const node = document.getElementById(BADGE_ID + '_count');
       if (node) node.textContent = String(n);
     },
   };
+
+  // ---------------------------------------------------------------- 观察者快照
+  let lastSnapshotKey = '';
+  let snapshotCooldown = 0;
+  let lastOverlayCount = 0;
+  let lastHref = location.href;
+  let snapshotTimer = null;
+
+  const maybeEmitSnapshot = (trigger) => {
+    if (!window.__atpCollectObservation) return;
+    const now = Date.now();
+    if (now - snapshotCooldown < 450) return;
+    const snap = window.__atpCollectObservation(trigger);
+    if (!snap || !snap.fields || !snap.fields.length) return;
+    const layer = snap.layer || {};
+    const key = [
+      snap.trigger,
+      snap.url,
+      layer.kind,
+      layer.name || '',
+      snap.fields.map((f) => f.label).join(','),
+    ].join('|');
+    if (key === lastSnapshotKey && trigger !== 'manual' && trigger !== 'record_end') return;
+    lastSnapshotKey = key;
+    snapshotCooldown = now;
+    emit({ type: 'observe_snapshot', ...snap });
+  };
+
+  const scheduleSnapshot = (trigger) => {
+    if (snapshotTimer) clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => maybeEmitSnapshot(trigger), 320);
+  };
+
+  const overlayCount = () => {
+    return Array.from(document.querySelectorAll(OVERLAY_SEL)).filter((node) => {
+      if (!node || !node.getBoundingClientRect) return false;
+      const st = getComputedStyle(node);
+      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      const box = node.getBoundingClientRect();
+      return box.width >= 2 && box.height >= 2;
+    }).length;
+  };
+
+  const watchObserver = () => {
+    lastOverlayCount = overlayCount();
+    scheduleSnapshot('navigation');
+    setInterval(() => {
+      if (location.href !== lastHref) {
+        lastHref = location.href;
+        scheduleSnapshot('navigation');
+      }
+    }, 600);
+    const observer = new MutationObserver(() => {
+      const count = overlayCount();
+      if (count > lastOverlayCount) scheduleSnapshot('layer_open');
+      else if (count < lastOverlayCount) scheduleSnapshot('layer_close');
+      else scheduleSnapshot('form_visible');
+      lastOverlayCount = count;
+    });
+    if (document.documentElement) {
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', watchObserver);
+  } else {
+    watchObserver();
+  }
 })();

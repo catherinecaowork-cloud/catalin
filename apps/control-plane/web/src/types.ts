@@ -7,6 +7,24 @@ export type Site = {
   probe_error_url_patterns: string[];
 };
 
+export type PageWidgetEntry = {
+  id: string;
+  display_name: string;
+  widget_kind: string;
+  operation: string;
+  value_strategy: string;
+  choose_mode?: string | null;
+  layer?: { kind: string; name?: string | null };
+};
+
+export type PageWidgetModel = {
+  site_id?: string | null;
+  flow_id?: string | null;
+  recording_run_id?: string | null;
+  entries: PageWidgetEntry[];
+  snapshots_seen?: number;
+};
+
 export type Flow = {
   id: string;
   site_id: string;
@@ -18,6 +36,7 @@ export type Flow = {
   has_baseline: boolean;
   setup_flow_id: string | null;
   imported_from: string | null;
+  page_widget_model?: PageWidgetModel | null;
 };
 
 export type Suite = {
@@ -60,6 +79,10 @@ export type RunStep = {
   drift?: string;
   elapsed?: number;
   screenshot?: string;
+  /** 命中的定位候选摘要，如 label=PO单号 */
+  object?: string;
+  /** 填写的值或期望内容 */
+  input?: string;
 };
 
 export type RunAlert = Record<string, unknown>;
@@ -91,6 +114,11 @@ export type RecordStep = {
 };
 
 export type RecordingSummary = {
+  /** 样例轨迹（Playwright 清洗步骤） */
+  sample_steps?: RecordStep[];
+  /** 观察者编写脚本；降级时为空 */
+  observer_steps?: RecordStep[];
+  /** @deprecated 兼容旧 summary，等同 sample_steps */
   steps?: RecordStep[];
   notes?: string[];
   error?: string;
@@ -107,6 +135,9 @@ export type Compilation = {
   attempt: number;
   max_attempts: number;
   steps: RecordStep[];
+  sample_steps?: RecordStep[];
+  observer_steps?: RecordStep[] | null;
+  compile_mode?: "observer" | "polish" | "fallback";
   notes: string[];
   usage?: { input_tokens?: number; output_tokens?: number };
   error?: string | null;

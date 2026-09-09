@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useBottomPanelPublisher } from "../../context/BottomPanelContext";
 import { HealModal } from "../HealModal";
 import { ShotViewer } from "../ShotViewer";
 import { useRunStream } from "../../hooks/useRunStream";
@@ -42,6 +43,7 @@ export function RunWorkspace({
   }, []);
 
   const stream = useRunStream(runId, onLog, handleFollowBatch, onRunEnd);
+  useBottomPanelPublisher(stream.steps, stream.alerts);
   const [inspectTab, setInspectTab] = useState<InspectTab>("shot");
   const [viewerOpen, setViewerOpen] = useState(false);
   const [healTask, setHealTask] = useState<HealTask | null>(null);
@@ -82,7 +84,7 @@ export function RunWorkspace({
       <div className="run-workspace">
         <RunToolbar title={title} color={moduleColor} badge={stream.badge} />
         <div className="split">
-          <div className="split-main">
+          <div className="split-main run-steps-pane">
             {stream.summary ? (
               <RunSummaryCard
                 status={stream.summary.status}

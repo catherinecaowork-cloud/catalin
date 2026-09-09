@@ -40,13 +40,16 @@ ACTIONS: tuple[str, ...] = (
     "screenshot",
 )
 
-CandidateKind = Literal["testid", "field", "role", "label", "placeholder", "text", "css"]
+CandidateKind = Literal[
+    "testid", "field", "matrix", "role", "label", "placeholder", "text", "css"
+]
 
 # 定位方式的稳定性排序，数字越小越优先。
 # 哈希 class 不在此列——它不是一种候选，而是被明确排除的做法。
 CANDIDATE_STABILITY: dict[str, int] = {
     "testid": 0,
     "field": 1,
+    "matrix": 1,
     "role": 2,
     "label": 3,
     "placeholder": 4,

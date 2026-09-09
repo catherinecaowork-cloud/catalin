@@ -1,5 +1,8 @@
+import { CircleDot } from "lucide-react";
+
 import { useRecordContext } from "../../context/RecordContext";
 import type { Worker } from "../../types";
+import { ModuleToolbar, ModuleToolbarGroup, ModuleToolbarLabel } from "../patterns/ModuleToolbar";
 import { EditorPlaceholder, EditorView } from "../layout/EditorLayout";
 import { RunWorkspace } from "../run/RunWorkspace";
 import { RecordDraftWorkspace } from "./RecordDraftWorkspace";
@@ -39,7 +42,15 @@ export function RecordEditorBody({ activeRecRunId, workersOnline, workers, onLog
   }
 
   return (
-    <EditorView toolbar="录制 · 填写意图后开始" color="var(--c-record)">
+    <EditorView
+      toolbar={
+        <ModuleToolbar color="var(--c-record)">
+          <ModuleToolbarGroup>
+            <ModuleToolbarLabel icon={CircleDot}>填写意图后开始</ModuleToolbarLabel>
+          </ModuleToolbarGroup>
+        </ModuleToolbar>
+      }
+    >
       <EditorPlaceholder text="开窗录制业务操作，结束后 AI 编译或直接保存为草稿。" />
     </EditorView>
   );

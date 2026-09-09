@@ -77,6 +77,15 @@ class FlowOut(BaseModel):
     has_baseline: bool
     setup_flow_id: str | None = None
     imported_from: str | None = None
+    page_widget_model: dict[str, Any] | None = None
+
+
+class PageWidgetModelOut(BaseModel):
+    site_id: str | None = None
+    flow_id: str | None = None
+    recording_run_id: str | None = None
+    entries: list[dict[str, Any]] = []
+    snapshots_seen: int = 0
 
 
 class FlowSetupUpdate(BaseModel):
@@ -248,6 +257,9 @@ class CompilationOut(BaseModel):
     attempt: int
     max_attempts: int = 3
     steps: list[dict[str, Any]]
+    sample_steps: list[dict[str, Any]] = []
+    observer_steps: list[dict[str, Any]] | None = None
+    compile_mode: str = "observer"
     notes: list[str]
     validation_run_id: str | None = None
     usage: dict[str, Any] = {}
@@ -257,6 +269,7 @@ class CompilationOut(BaseModel):
 
 class CompilationRetry(BaseModel):
     intent: str | None = None
+    compile_mode: Literal["observer", "polish"] | None = None
 
 
 class AIConfigOut(BaseModel):

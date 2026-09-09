@@ -12,6 +12,7 @@ from .compiler import (
     parse_contract,
     validate_template_value,
 )
+from .observer import AIObserver, parse_observer_contract, validate_observer_steps
 from .schemas import (
     AssertionProposal,
     CompileContract,
@@ -24,6 +25,7 @@ from .schemas import (
 
 __all__ = [
     "AICompiler",
+    "AIObserver",
     "AIConfigurationError",
     "AIContractError",
     "AIRequestError",
@@ -37,5 +39,7 @@ __all__ = [
     "TokenUsage",
     "apply_contract",
     "parse_contract",
+    "parse_observer_contract",
+    "validate_observer_steps",
     "validate_template_value",
 ]

@@ -104,9 +104,11 @@ export function AppSidebar({
 
           title={title}
 
+          explorer
+
           body={
 
-            <SidebarBody>
+            <SidebarBody explorer>
 
               <RunSidebar />
 
@@ -186,9 +188,11 @@ export function AppSidebar({
 
         title={title}
 
+        explorer
+
         body={
 
-          <SidebarBody>
+          <SidebarBody explorer>
 
             <HistorySidebar onOpenRun={(runId, title) => onOpenRun(runId, title, false)} />
 

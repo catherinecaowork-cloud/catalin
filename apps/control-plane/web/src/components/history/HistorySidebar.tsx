@@ -1,5 +1,7 @@
+import { useMemo, useState } from "react";
+
 import { useHistoryContext } from "../../context/HistoryContext";
-import { ExplorerItem } from "../patterns/ExplorerItem";
+import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
 import { Button, Checkbox, EmptyState, ModuleHint, Muted } from "../ui";
 
 type Props = {
@@ -8,10 +10,41 @@ type Props = {
 
 export function HistorySidebar({ onOpenRun }: Props) {
   const history = useHistoryContext();
+  const [filter, setFilter] = useState("");
   const picked = history.selected.size;
   const deletable = history.runs.filter((run) => !history.isBusy(run));
   const allChecked =
     deletable.length > 0 && deletable.every((run) => history.selected.has(run.id));
+
+  const nodes = useMemo((): ExplorerNode[] => {
+    const runNodes: ExplorerNode[] = history.runs.map((run) => {
+      const busy = history.isBusy(run);
+      const time = new Date(run.created_at).toLocaleString("zh-CN", { hour12: false });
+      const dur = run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : "";
+      return {
+        id: run.id,
+        kind: "run",
+        label: `${history.kindText(run.kind)} · ${history.statusText(run.status)}`,
+        sub: `${time} ${dur}`.trim(),
+        markColor: "var(--c-history)",
+        disabled: busy,
+        pick: (
+          <input
+            type="checkbox"
+            className="pick"
+            disabled={busy}
+            checked={history.selected.has(run.id)}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => history.togglePick(run.id, event.target.checked)}
+          />
+        ),
+        onSelect: () => onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`),
+      };
+    });
+
+    if (!runNodes.length) return [];
+    return [{ id: "folder-runs", kind: "folder", label: "运行记录", children: runNodes }];
+  }, [history, onOpenRun]);
 
   return (
     <>
@@ -20,8 +53,8 @@ export function HistorySidebar({ onOpenRun }: Props) {
         className="check hist-tools"
         label={
           <>
-        全选
-        <Muted>{picked ? `已选 ${picked}` : "未选"}</Muted>
+            全选
+            <Muted>{picked ? `已选 ${picked}` : "未选"}</Muted>
           </>
         }
         checked={allChecked}
@@ -32,32 +65,13 @@ export function HistorySidebar({ onOpenRun }: Props) {
       ) : history.runs.length === 0 ? (
         <EmptyState>当前站点还没有运行记录。</EmptyState>
       ) : (
-        history.runs.map((run) => {
-          const busy = history.isBusy(run);
-          const time = new Date(run.created_at).toLocaleString("zh-CN", {
-            hour12: false,
-          });
-          const dur = run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : "";
-          return (
-            <ExplorerItem
-              key={run.id}
-              markColor="var(--c-history)"
-              name={`${history.kindText(run.kind)} · ${history.statusText(run.status)}`}
-              sub={`${time} ${dur}`}
-              pick={
-                <input
-                  type="checkbox"
-                  className="pick"
-                  disabled={busy}
-                  checked={history.selected.has(run.id)}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => history.togglePick(run.id, event.target.checked)}
-                />
-              }
-              onSelect={() => onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`)}
-            />
-          );
-        })
+        <ExplorerTree
+          nodes={nodes}
+          filter={filter}
+          onFilterChange={setFilter}
+          filterPlaceholder="搜索运行记录…"
+          emptyMessage="没有匹配的运行记录"
+        />
       )}
     </>
   );

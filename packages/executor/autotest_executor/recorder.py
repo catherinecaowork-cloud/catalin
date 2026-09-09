@@ -22,11 +22,17 @@ from autotest_executor.browser.readiness import wait_for_app_ready
 from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
 from autotest_executor.client import ControlPlaneClient
 from autotest_executor.compiler import compile_events
-from autotest_protocol import Job, Step, new_event
+from autotest_executor.observer_collect import (
+    _MAX_SNAPSHOTS,
+    sanitize_observation_payload,
+    snapshot_dedupe_key,
+)
+from autotest_protocol import Job, RecordingSummary, Step, new_event, new_observe_snapshot_event
 
 _BROWSER_DIR = Path(__file__).resolve().parent / "browser"
 _LOCATOR_JS = (_BROWSER_DIR / "locator_candidates.js").read_text(encoding="utf-8")
 _RECORDER_JS = (_BROWSER_DIR / "recorder.js").read_text(encoding="utf-8")
+_OBSERVER_SNAPSHOT_JS = (_BROWSER_DIR / "observer_snapshot.js").read_text(encoding="utf-8")
 
 # 忘了点结束的窗口不能把执行器占死
 _MAX_SECONDS = 30 * 60
@@ -167,6 +173,9 @@ class RecordExecutor:
         self._stopped = False
         self.start_url = job.site.base_url
         self._record_origin: tuple[str, str, int | None] | None = None
+        self._snapshot_seq = 0
+        self._snapshot_keys: set[str] = set()
+        self._snapshot_count = 0
 
     def execute(self) -> str:
         started = time.monotonic()
@@ -265,6 +274,7 @@ class RecordExecutor:
             screenshot=self._capture("record_goto"),
         )
         self._emit("log", level="info", message=f"开始录制：{self.start_url}")
+        self._capture_observation_snapshot("navigation")
 
     def _arm_response_capture(self) -> None:
         """起始页就绪后才监听，登录流量不会进入编译上下文。"""
@@ -306,9 +316,10 @@ class RecordExecutor:
         # 顺序不能改：recorder.js 一装上就会调 __atpEmit，binding 还没注册事件直接丢。
         # add_init_script 只管后续导航，当前这一页必须手动 evaluate。
         self.session.context.expose_binding("__atpEmit", self._on_emit)
-        combined = _LOCATOR_JS + "\n" + _RECORDER_JS
+        combined = _LOCATOR_JS + "\n" + _OBSERVER_SNAPSHOT_JS + "\n" + _RECORDER_JS
         self.session.context.add_init_script(script=combined)
         self.session.page.evaluate(_LOCATOR_JS)
+        self.session.page.evaluate(_OBSERVER_SNAPSHOT_JS)
         self.session.page.evaluate(_RECORDER_JS)
 
     def _on_emit(self, _source: Any, payload: Any) -> None:
@@ -317,7 +328,44 @@ class RecordExecutor:
         if payload.get("type") == "stop":
             self._stopped = True
             return
+        if payload.get("type") == "observe_snapshot":
+            self._ingest_observation_snapshot(payload)
+            return
         self.events.append(payload)
+
+    def _ingest_observation_snapshot(self, payload: dict[str, Any]) -> None:
+        if self._snapshot_count >= _MAX_SNAPSHOTS:
+            return
+        snapshot = sanitize_observation_payload(payload)
+        if snapshot is None:
+            return
+        key = snapshot_dedupe_key(snapshot)
+        if key in self._snapshot_keys:
+            return
+        self._snapshot_keys.add(key)
+        self._snapshot_seq += 1
+        self._snapshot_count += 1
+        data = snapshot.model_dump(mode="json", exclude_none=True)
+        data["seq"] = self._snapshot_seq
+        self._emit_observe_snapshot(**data)
+
+    def _emit_observe_snapshot(self, **data: Any) -> None:
+        self.client.post_events(self.job.run_id, [new_observe_snapshot_event(**data)])
+
+    def _capture_observation_snapshot(self, trigger: str) -> None:
+        try:
+            payload = self.session.page.evaluate(
+                "(trigger) => window.__atpCollectObservation"
+                " ? window.__atpCollectObservation(trigger)"
+                " : null",
+                trigger,
+            )
+        except Exception:
+            return
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["trigger"] = trigger
+            self._ingest_observation_snapshot(payload)
 
     def _wait_until_stop(self) -> None:
         deadline = time.monotonic() + _MAX_SECONDS
@@ -360,16 +408,29 @@ class RecordExecutor:
             screenshot_url = self.client.upload_artifact(self.job.run_id, "record_end.png", shot)
         except Exception:
             pass
-        return {
-            "steps": steps,
-            "notes": notes,
-            "raw_event_count": len(self.events),
-            "start_url": self.start_url,
-            "site_id": self.job.site.id,
-            "credential_id": self.job.auth.ref,
-            "screenshot": screenshot_url,
-            "compiler_context": compiler_context,
-        }
+        self._capture_observation_snapshot("record_end")
+        summary = RecordingSummary(
+            sample_steps=steps,
+            observer_steps=[],
+            notes=notes,
+            raw_event_count=len(self.events),
+            start_url=self.start_url,
+            site_id=self.job.site.id,
+            credential_id=self.job.auth.ref,
+            screenshot=screenshot_url,
+            compiler_context=compiler_context,
+        )
+        payload = summary.to_summary_dict()
+        payload["click_trace"] = [
+            {
+                "type": event.get("type"),
+                "text": event.get("text"),
+                "scope": ((event.get("target") or {}).get("scope") or {}).get("name"),
+            }
+            for event in self.events
+            if event.get("type") in {"click", "choose", "fill"}
+        ]
+        return payload
 
     def _capture_compiler_context(self, steps: list[dict[str, Any]]) -> dict[str, Any]:
         page = self.session.page

@@ -1,7 +1,7 @@
 import type { RecordStep } from "../../types";
 import { EmptyState, ModuleHint } from "../ui";
-import type { DraftStepPatch } from "./DraftStepCard";
-import { DraftStepCard } from "./DraftStepCard";
+import type { DraftStepPatch } from "./DraftStepGrid";
+import { DraftStepGrid } from "./DraftStepGrid";
 
 type Props = {
   steps: RecordStep[];
@@ -12,25 +12,18 @@ type Props = {
 
 export function DraftStepList({ steps, onUpdate, onDelete, onMakeUniqueValue }: Props) {
   return (
-    <>
+    <div className="draft-steps-pane">
       <ModuleHint>步骤在这里滚动查看。连续重复点击已合并。</ModuleHint>
       {steps.length === 0 ? (
         <EmptyState>还没有步骤。</EmptyState>
       ) : (
-        steps.map((step, index) => (
-          <DraftStepCard
-            key={step.id}
-            step={step}
-            onChange={(patch) => onUpdate(index, patch)}
-            onDelete={() => onDelete(index)}
-            onMakeUniqueValue={
-              step.value !== undefined && step.action !== "goto"
-                ? () => onMakeUniqueValue(index)
-                : undefined
-            }
-          />
-        ))
+        <DraftStepGrid
+          steps={steps}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          onMakeUniqueValue={onMakeUniqueValue}
+        />
       )}
-    </>
+    </div>
   );
 }

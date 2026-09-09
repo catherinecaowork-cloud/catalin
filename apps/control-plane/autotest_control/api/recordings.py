@@ -56,6 +56,7 @@ from autotest_control.domain.mappers import (
     worker_out,
 )
 from autotest_control.domain.queue import advance_batch, enqueue_chain, queue_replay
+from autotest_control.domain.observer import attach_model_to_flow, seed_run_observation
 from autotest_control.domain.recordings import get_compilation, prepare_recorded_step
 from autotest_control.domain.redact import redact
 from autotest_control.domain.runs import (
@@ -177,6 +178,8 @@ def start_recording(
         stop_requested=False,
     )
     session.add(run)
+    session.flush()
+    seed_run_observation(session, scope, run)
     session.commit()
     hub.notify_new_job()
     return {"run_id": run_id}
@@ -196,7 +199,15 @@ def get_recording(
         .limit(1)
     ).first()
     event_count = (last.data or {}).get("event_count", 0) if last else 0
-    return {"status": run.status, "summary": run.summary or {}, "event_count": event_count}
+    observation = run.observation_model if isinstance(run.observation_model, dict) else {}
+    entries = observation.get("entries") if isinstance(observation.get("entries"), list) else []
+    return {
+        "status": run.status,
+        "summary": run.summary or {},
+        "event_count": event_count,
+        "observation_model": observation,
+        "recognized_count": len(entries),
+    }
 
 
 
@@ -222,12 +233,14 @@ def start_recording_compile(
     if existing is not None:
         return compilation_out(existing)
     summary = run.summary or {}
-    steps = summary.get("steps") or []
+    steps = summary.get("sample_steps") or summary.get("steps") or []
     if not isinstance(steps, list) or not steps:
         raise HTTPException(status_code=409, detail="录制没有生成可编译步骤")
     intent = str((run.job or {}).get("record_intent") or "").strip()
     if not intent:
         raise HTTPException(status_code=409, detail="录制任务缺少意图")
+    observation = run.observation_model if isinstance(run.observation_model, dict) else {}
+    compile_mode = "observer" if observation.get("entries") else "polish"
     row = RecordingCompilation(
         id=new_id(),
         tenant_id=scope.tenant_id,
@@ -236,6 +249,7 @@ def start_recording_compile(
         status="queued",
         intent=intent,
         deterministic_steps=steps,
+        compile_mode=compile_mode,
         compile_notes=list(summary.get("notes") or []),
     )
     session.add(row)
@@ -264,6 +278,10 @@ def retry_recording_compile(
         raise HTTPException(status_code=409, detail="当前编译仍在进行")
     if payload.intent is not None and payload.intent.strip():
         row.intent = payload.intent.strip()
+    if payload.compile_mode is not None:
+        row.compile_mode = payload.compile_mode
+        if payload.compile_mode == "polish":
+            row.observer_steps = None
     row.status = "queued"
     row.attempt = 0
     row.validation_run_id = None
@@ -283,6 +301,8 @@ def use_recording_fallback(
     row = get_compilation(session, scope, run_id)
     row.status = "fallback"
     row.compiled_steps = row.deterministic_steps
+    row.observer_steps = None
+    row.compile_mode = "fallback"
     row.validation_run_id = None
     row.error = row.error or "已采用确定性步骤，尚未通过自动回放验证"
     session.commit()
@@ -391,6 +411,11 @@ def save_recording(
         auth_type=auth.get("type") or "none",
         credential_id=auth.get("ref"),
     )
+    attach_model_to_flow(flow, run)
     session.add(flow)
     session.commit()
-    return {"flow_id": flow.id, "flow_name": flow.name}
+    return {
+        "flow_id": flow.id,
+        "flow_name": flow.name,
+        "page_widget_model": flow.page_widget_model or {},
+    }

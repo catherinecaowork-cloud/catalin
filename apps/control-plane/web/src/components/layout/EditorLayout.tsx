@@ -32,16 +32,23 @@ export function EditorView({
   children,
   bodyClassName,
 }: {
-  toolbar: string;
-  color: string;
+  toolbar: ReactNode;
+  color?: string;
   children: ReactNode;
   bodyClassName?: string;
 }) {
-  return (
-    <div className="editor-view active">
-      <div className="editor-toolbar" style={{ color }}>
+  const bar =
+    typeof toolbar === "string" ? (
+      <div className="editor-toolbar" style={color ? { color } : undefined}>
         {toolbar}
       </div>
+    ) : (
+      toolbar
+    );
+
+  return (
+    <div className="editor-view active">
+      {bar}
       <div className={cn("editor-body", bodyClassName)}>{children}</div>
     </div>
   );

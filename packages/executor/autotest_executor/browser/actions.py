@@ -16,6 +16,7 @@ from autotest_adapters.oinone.selectors import (
     CLICKABLE_ANCESTOR_XPATH,
     DROPDOWN_MIXED_VISIBLE,
     DROPDOWN_POPPER_VISIBLE,
+    DROPDOWN_SCROLL_HOLDER,
     DROPDOWN_WIDGETS,
     CLICKABLE_VISIBLE,
     MODAL_WRAP_VISIBLE,
@@ -28,8 +29,10 @@ from autotest_adapters.oinone.selectors import (
     MODAL_VISIBLE,
     OVERLAY_WAIT_VISIBLE,
     SPINNER_VISIBLE,
+    DATE_PICKER_WIDGETS,
     is_select_trigger_css,
     looks_like_dropdown_option,
+    looks_like_picker_date,
     panel_visible_selectors,
 )
 from autotest_executor.browser.locator import (
@@ -39,6 +42,10 @@ from autotest_executor.browser.locator import (
     click_ant_sidebar_menu,
     pick_dropdown_option,
     pick_first_dropdown_option,
+    locator_is_readonly_picker,
+    parse_picker_value,
+    pick_ant_date,
+    pick_ant_picker_value,
     pick_any_panel_choice,
     resolve_target,
     visible_dropdown_panel,
@@ -146,6 +153,70 @@ def field_name_from_label(label: str | None) -> str | None:
     return name
 
 
+_DROPDOWN_SCROLL_MARKERS = (
+    "el-select-dropdown",
+    "select-options",
+    "select-body",
+    "el-scrollbar__view",
+    "el-scrollbar__wrap",
+)
+
+
+_DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _picker_date_value(step: Step) -> str | None:
+    target = step.target
+    if target is not None:
+        for cand in target.ordered():
+            value = (cand.value or "").strip()
+            if cand.kind == "text" and _DATE_ISO.fullmatch(value):
+                return value
+            if cand.kind == "css" and "title=" in value:
+                match = re.search(r'title="(\d{4}-\d{2}-\d{2})"', value)
+                if match:
+                    return match.group(1)
+    label = step.label or ""
+    match = re.search(r"「(\d{4}-\d{2}-\d{2})」", label)
+    return match.group(1) if match else None
+
+
+def _looks_like_picker_date_click(step: Step) -> bool:
+    target = step.target
+    if target is None:
+        return False
+    if target.widget in DATE_PICKER_WIDGETS:
+        return True
+    if (target.panel or "").startswith("picker-overlay"):
+        return True
+    blob = " ".join(f"{c.kind}={c.value}" for c in target.candidates).lower()
+    if looks_like_picker_date(blob):
+        return True
+    return bool(_picker_date_value(step) and "picker" in blob)
+
+
+def _picker_trigger_meta(step: Step) -> tuple[str | None, str | None]:
+    target = step.target
+    if target is None:
+        return None, None
+    field = next((c.value for c in target.candidates if c.kind == "field" and c.value), None)
+    trigger = target.trigger_css
+    return trigger, field
+
+
+def _is_dropdown_internal_scroll(step: Step) -> bool:
+    """录制时在下拉浮层里滚轮浏览选项产生的 scroll。"""
+    target = step.target
+    if target is None:
+        return False
+    if target.scope is not None and target.scope.kind == "dropdown":
+        return True
+    blob = " ".join(
+        f"{c.kind}={c.value}" for c in target.candidates
+    ).lower()
+    return any(marker in blob for marker in _DROPDOWN_SCROLL_MARKERS)
+
+
 def should_skip_optional_miss(
     *,
     action: str,
@@ -249,7 +320,7 @@ class ActionRunner:
         self._last_trigger_css: str | None = None
         self._fallback_picked: set[str] = set()
 
-    def _resolve(self, step: Step):
+    def _resolve(self, step: Step, *, fill_value: str | None = None):
         assert step.target is not None
         return resolve_target(
             self.session.page,
@@ -257,6 +328,32 @@ class ActionRunner:
             step.timeout_ms,
             memory=self.locator_memory,
             step_id=step.id,
+            fill_value=fill_value,
+        )
+
+    def _try_pick_date(self, step: Step) -> StepOutcome | None:
+        date_val = _picker_date_value(step)
+        if not date_val or not _looks_like_picker_date_click(step):
+            return None
+        trigger, field = _picker_trigger_meta(step)
+        if pick_ant_picker_value(
+            self.session.page,
+            date_val,
+            trigger_css=trigger,
+            field=field,
+            timeout_ms=step.timeout_ms,
+        ):
+            return StepOutcome(
+                step.id,
+                step.action,
+                "passed",
+                data={"value": date_val, "mode": "date_picker"},
+            )
+        return StepOutcome(
+            step.id,
+            step.action,
+            "failed",
+            f"日期面板里选不中 {date_val}",
         )
 
     def run(self, step: Step) -> StepOutcome:
@@ -301,6 +398,9 @@ class ActionRunner:
 
     def _do_click(self, step: Step) -> StepOutcome:
         assert step.target is not None
+        date_outcome = self._try_pick_date(step)
+        if date_outcome is not None:
+            return date_outcome
         self._ensure_panel_open(step)
         option_name = self._dropdown_option_name(step)
         if option_name:
@@ -402,7 +502,8 @@ class ActionRunner:
         assert step.target is not None and step.value is not None
         if "fakepath" in (step.value or "").lower():
             return self._do_upload(step)
-        resolution = self._resolve(step)
+        target = step.target
+        resolution = self._resolve(step, fill_value=step.value)
         box = resolution.locator
         try:
             tag = box.evaluate("(el) => el && el.tagName ? el.tagName.toLowerCase() : ''")
@@ -420,6 +521,36 @@ class ActionRunner:
             input_type = ""
         if input_type == "file" or "fakepath" in (step.value or "").lower():
             return self._do_upload(step)
+        blob = " ".join(f"{c.kind}={c.value}" for c in target.candidates)
+        is_picker = (
+            target.widget in DATE_PICKER_WIDGETS
+            or locator_is_readonly_picker(box)
+            or looks_like_picker_date(blob)
+        )
+        if is_picker:
+            trigger, field = _picker_trigger_meta(step)
+            if parse_picker_value(step.value):
+                if pick_ant_picker_value(
+                    self.session.page,
+                    step.value,
+                    trigger_css=trigger,
+                    field=field,
+                    input_locator=box,
+                    timeout_ms=step.timeout_ms,
+                ):
+                    return StepOutcome(
+                        step.id,
+                        step.action,
+                        "passed",
+                        data={"value": step.value, "mode": "date_picker"},
+                    )
+            return StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                f"日期控件是只读的，不能 fill；需要 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss，"
+                f"实际为 {step.value!r}",
+            )
         box.fill(step.value, timeout=step.timeout_ms)
         box.evaluate(_JS_COMMIT_INPUT)
         actual = box.input_value(timeout=step.timeout_ms)
@@ -854,11 +985,42 @@ class ActionRunner:
     def _do_scroll(self, step: Step) -> StepOutcome:
         assert step.target is not None
         self._ensure_panel_open(step)
-        resolution = self._resolve(step)
         try:
             top = int(float(step.value or 0))
         except (TypeError, ValueError):
             top = 0
+        # 下拉已打开时，录到的 css 往往是浮层内部路径，对不上就滚不动。
+        # 改滚当前可见下拉的滚动容器（与 pick_dropdown_option 一致）。
+        if _is_dropdown_internal_scroll(step):
+            page = self.session.page
+            panel = visible_dropdown_panel(page)
+            if panel is None:
+                return StepOutcome(
+                    step.id,
+                    step.action,
+                    "failed",
+                    "下拉滚动步骤：面板未打开或不可见",
+                )
+            holder = panel.locator(DROPDOWN_SCROLL_HOLDER)
+            try:
+                scroll_target = holder.last if holder.count() else panel
+                scroll_target.evaluate(
+                    """(el, y) => {
+                      el.scrollTop = y;
+                      el.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    }""",
+                    top,
+                )
+                page.wait_for_timeout(120)
+                return StepOutcome(
+                    step.id,
+                    step.action,
+                    "passed",
+                    data={"scrollTop": top, "mode": "dropdown_panel"},
+                )
+            except Exception as exc:
+                return StepOutcome(step.id, step.action, "failed", str(exc))
+        resolution = self._resolve(step)
         resolution.locator.evaluate(
             """(el, y) => {
               el.scrollTop = y;

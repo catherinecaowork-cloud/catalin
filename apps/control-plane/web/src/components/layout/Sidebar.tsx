@@ -7,13 +7,15 @@ type Props = {
   title: ReactNode;
   body: ReactNode;
   foot?: ReactNode;
+  explorer?: boolean;
 };
 
-export function Sidebar({ open, title, body, foot }: Props) {
+export function Sidebar({ open, title, body, foot, explorer }: Props) {
   return (
-    <aside className={cn("sidebar", open && "open")}>
+    <aside className={cn("sidebar", open && "open", explorer && "explorer")}>
       <div className="side-head">
-        <b>{title}</b>
+        <b>{explorer ? "Tests Explorer" : title}</b>
+        {explorer ? <span className="side-head-sub">{title}</span> : null}
       </div>
       {body}
       {foot}
@@ -21,8 +23,8 @@ export function Sidebar({ open, title, body, foot }: Props) {
   );
 }
 
-export function SidebarBody({ children }: { children: ReactNode }) {
-  return <div className="side-body">{children}</div>;
+export function SidebarBody({ children, explorer }: { children: ReactNode; explorer?: boolean }) {
+  return <div className={cn("side-body", explorer && "explorer-body")}>{children}</div>;
 }
 
 export function SidebarFoot({ children }: { children: ReactNode }) {

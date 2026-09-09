@@ -21,6 +21,7 @@ EventType = Literal[
     "artifact",
     "log",
     "record.progress",
+    "observe.snapshot",
     "run.end",
 ]
 
@@ -35,3 +36,8 @@ class Event(BaseModel):
 
 def new_event(type_: EventType, **data: Any) -> Event:
     return Event(type=type_, data=data)
+
+
+def new_observe_snapshot_event(**data: Any) -> Event:
+    """Worker 上报脱敏页面观察快照（字段库存，不是 HTML）。"""
+    return new_event("observe.snapshot", **data)

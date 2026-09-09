@@ -1,4 +1,4 @@
-import { useEffect, useId, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import { cn } from "./cn";
 
@@ -14,7 +14,7 @@ type Props = {
 
 export function Modal({
   open,
-  onClose,
+  onClose: _onClose,
   title,
   titleId: titleIdProp,
   wide,
@@ -24,25 +24,15 @@ export function Modal({
   const autoId = useId();
   const titleId = titleIdProp ?? (title ? autoId : undefined);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop open" onClick={onClose}>
+    <div className="modal-backdrop open">
       <div
         className={cn("modal", wide && "wide")}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        onClick={(event) => event.stopPropagation()}
       >
         {title ? <h3 id={titleId}>{title}</h3> : null}
         {children}

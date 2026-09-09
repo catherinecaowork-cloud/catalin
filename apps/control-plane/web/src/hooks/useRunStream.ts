@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Batch, HealTask, RunAlert, RunAssert, RunStep, Shot } from "../types";
 
 import { statusText } from "../utils/flow";
+import { parseStepDetail } from "../utils/runStepDisplay";
 
 
 
@@ -95,6 +96,7 @@ function buildStepsFromEvents(events: StreamEvent[]): Map<string, RunStep> {
     }
 
     if (event.type === "step.end") {
+      const detail = parseStepDetail(data);
 
       steps.set(stepId, {
 
@@ -113,6 +115,10 @@ function buildStepsFromEvents(events: StreamEvent[]): Map<string, RunStep> {
         elapsed: typeof data.elapsed_ms === "number" ? data.elapsed_ms : undefined,
 
         screenshot: stepScreenshot(data),
+
+        object: detail.object,
+
+        input: detail.input,
 
       });
 
@@ -202,6 +208,8 @@ function hydrateStepsFromSummary(summary: Record<string, unknown> | null): RunSt
 
     const stepId = String(item.step_id ?? item.stepId ?? "");
 
+    const detail = parseStepDetail(item);
+
     return {
 
       stepId,
@@ -219,6 +227,10 @@ function hydrateStepsFromSummary(summary: Record<string, unknown> | null): RunSt
       elapsed: typeof item.elapsed_ms === "number" ? item.elapsed_ms : undefined,
 
       screenshot: item.screenshot ? String(item.screenshot) : undefined,
+
+      object: detail.object,
+
+      input: detail.input,
 
     };
 
@@ -435,6 +447,7 @@ export function useRunStream(
       if (event.type === "step.end") {
 
         const screenshot = stepScreenshot(data);
+        const detail = parseStepDetail(data);
 
         upsertStep(String(data.step_id), {
 
@@ -451,6 +464,10 @@ export function useRunStream(
           elapsed: typeof data.elapsed_ms === "number" ? data.elapsed_ms : undefined,
 
           screenshot,
+
+          object: detail.object,
+
+          input: detail.input,
 
         });
 

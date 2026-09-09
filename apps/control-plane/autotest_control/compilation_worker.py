@@ -15,7 +15,13 @@ from typing import Any
 
 from sqlalchemy import select
 
-from autotest_control.ai import AICompiler, AIConfigurationError, ImageInput
+from autotest_control.ai import AICompiler, AIConfigurationError, AIObserver, ImageInput
+from autotest_control.deps import Scope
+from autotest_control.domain.observer import (
+    load_recording_snapshots,
+    load_site_widget_models,
+    model_to_dict,
+)
 from autotest_control.db import session_scope
 from autotest_control.hub import hub
 from autotest_control.models import RecordingCompilation, Run, Site
@@ -129,20 +135,44 @@ class CompilationWorker:
             intent = row.intent
             attempt = row.attempt
             image = self._load_image(summary.get("screenshot"))
+            observation = recording.observation_model if isinstance(recording.observation_model, dict) else {}
+            snapshots = load_recording_snapshots(session, recording.id)
+            scope = Scope(recording.tenant_id, recording.project_id)
+            site_page_model = model_to_dict(load_site_widget_models(session, scope, recording.site_id))
+            use_observer = row.compile_mode == "observer" and bool(observation.get("entries"))
 
         try:
             settings.reload_ai(prefer_file=True)
-            result = AICompiler().compile(
-                source_steps,
-                intent=intent,
-                context=context,
-                images=[image] if image is not None else None,
-            )
-            compiled = [
-                step.model_dump(mode="json", exclude_none=True)
-                for step in result.steps
-            ]
-            ai_notes = list(result.notes)
+            images = [image] if image is not None else None
+            if use_observer:
+                result = AIObserver().write(
+                    source_steps,
+                    intent=intent,
+                    page_model=observation,
+                    snapshots=snapshots,
+                    site_page_model=site_page_model,
+                    context=context,
+                    images=images,
+                )
+                compiled = [
+                    step.model_dump(mode="json", exclude_none=True) for step in result.steps
+                ]
+                observer_steps = compiled
+                ai_notes = [*result.notes, "观察者编写"]
+                compile_mode = "observer"
+            else:
+                result = AICompiler().compile(
+                    source_steps,
+                    intent=intent,
+                    context=context,
+                    images=images,
+                )
+                compiled = [
+                    step.model_dump(mode="json", exclude_none=True) for step in result.steps
+                ]
+                observer_steps = None
+                ai_notes = list(result.notes)
+                compile_mode = "polish"
             usage = result.usage.model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - 失败要进入可见状态机
             with session_scope() as session:
@@ -168,11 +198,22 @@ class CompilationWorker:
             if row is None or recording is None or site is None:
                 return
             row.compiled_steps = compiled
+            row.observer_steps = observer_steps
+            row.compile_mode = compile_mode
             row.compile_notes = list(dict.fromkeys([*(row.compile_notes or []), *ai_notes]))
             row.usage = _sum_usage(row.usage or {}, usage)
             row.failure_context = None
             row.error = None
             row.updated_at = _now()
+            if use_observer and result.page_widget_entries:
+                merged = dict(recording.observation_model or {})
+                merged["entries"] = [
+                    entry.model_dump(mode="json", exclude_none=True)
+                    for entry in result.page_widget_entries
+                ]
+                merged["recording_run_id"] = recording.id
+                merged["site_id"] = recording.site_id
+                recording.observation_model = merged
             if site.env.lower() not in _ACTIVE_ENVIRONMENTS:
                 row.status = "manual_validation"
                 row.error = f"环境 {site.env} 不允许自动执行写操作"
@@ -202,6 +243,13 @@ class CompilationWorker:
                 row.status = "passed"
                 row.error = None
                 row.updated_at = _now()
+                recording = session.get(Run, row.recording_run_id)
+                if recording is not None:
+                    summary = dict(recording.summary or {})
+                    summary["sample_steps"] = row.deterministic_steps
+                    if row.observer_steps:
+                        summary["observer_steps"] = row.observer_steps
+                    recording.summary = summary
                 return
             row.failure_context = {
                 "stage": "replay_validation",
@@ -305,9 +353,11 @@ class CompilationWorker:
     def _fallback(row: RecordingCompilation, reason: str) -> None:
         row.status = "fallback"
         row.compiled_steps = row.deterministic_steps
+        row.observer_steps = None
+        row.compile_mode = "fallback"
         row.validation_run_id = None
         row.error = reason
-        note = f"AI 编译未通过，已回退确定性步骤：{reason}"
+        note = f"AI 编写未通过，已回退样例轨迹：{reason}"
         row.compile_notes = list(dict.fromkeys([*(row.compile_notes or []), note]))
         row.updated_at = _now()
 

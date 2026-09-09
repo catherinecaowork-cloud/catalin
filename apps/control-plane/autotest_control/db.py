@@ -40,6 +40,20 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE flow ADD COLUMN setup_flow_id VARCHAR(36)"))
         if "imported_from" not in flow_cols:
             conn.execute(text("ALTER TABLE flow ADD COLUMN imported_from VARCHAR(200)"))
+        if "page_widget_model" not in flow_cols:
+            conn.execute(text("ALTER TABLE flow ADD COLUMN page_widget_model JSON"))
+        run_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(run)")).fetchall()}
+        if "observation_model" not in run_cols:
+            conn.execute(text("ALTER TABLE run ADD COLUMN observation_model JSON"))
+        comp_cols = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(recording_compilation)")).fetchall()
+        }
+        if "observer_steps" not in comp_cols:
+            conn.execute(text("ALTER TABLE recording_compilation ADD COLUMN observer_steps JSON"))
+        if "compile_mode" not in comp_cols:
+            conn.execute(
+                text("ALTER TABLE recording_compilation ADD COLUMN compile_mode VARCHAR(20) DEFAULT 'observer'")
+            )
 
 
 @contextmanager

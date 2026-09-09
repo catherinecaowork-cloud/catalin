@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeout
 
@@ -28,11 +30,14 @@ from autotest_adapters.oinone.selectors import (
     FIELD_INPUT,
     LIVE_DROPDOWN,
     LIVE_MODAL,
+    MODAL_VISIBLE,
     OPTION_BY_TITLE,
+    PICKER_PANEL_VISIBLE,
     PANEL_TAB,
     PANEL_TAG,
     SELECTED_OPTION_TOKENS,
     SKIP_OPTION_LABELS,
+    sanitize_css_selector,
 )
 
 
@@ -106,16 +111,103 @@ class LocatorMemory:
             )
 
 
+def _role_name_exact(name: str | None) -> bool:
+    if not name:
+        return False
+    stripped = name.strip()
+    return stripped.isdigit() or len(stripped) <= 3
+
+
+def _clean_header(text: str) -> str:
+    return text.strip().split("\n")[0].replace("*", "").strip()
+
+
+def _build_matrix(root: Page | Locator, candidate: Candidate) -> Locator:
+    """颜色×尺码矩阵：按「表格标题 + 行颜色 + 列尺码」找输入框，不依赖 vxe 随机 id。"""
+    if "|" not in candidate.value:
+        raise TargetNotFound([f"matrix={candidate.value!r}"])
+    row_label, col_label = candidate.value.split("|", 1)
+    table_title = (candidate.name or "颜色尺码").strip()
+
+    tables = root.locator("table, .vxe-table--body table, .el-table__body table")
+    try:
+        table_count = tables.count()
+    except Exception:
+        table_count = 0
+
+    chosen = None
+    for index in range(table_count):
+        table = tables.nth(index)
+        try:
+            corner = _clean_header(table.locator("tr").first.locator("th, td").first.inner_text(timeout=500))
+        except Exception:
+            continue
+        if table_title in corner or "颜色" in corner or "尺码" in corner:
+            chosen = table
+            break
+    if chosen is None and table_count:
+        chosen = tables.last
+
+    if chosen is None:
+        raise TargetNotFound([f"matrix={candidate.value!r}"])
+
+    header_row = chosen.locator("thead tr, tr").first
+    header_cells = header_row.locator("th, td")
+    col_idx = None
+    try:
+        header_count = header_cells.count()
+    except Exception:
+        header_count = 0
+    for index in range(header_count):
+        try:
+            text = _clean_header(header_cells.nth(index).inner_text(timeout=500))
+        except Exception:
+            continue
+        if text == col_label:
+            col_idx = index
+            break
+    if col_idx is None:
+        raise TargetNotFound([f"matrix={candidate.value!r} col={col_label!r}"])
+
+    body_rows = chosen.locator("tbody tr, tr")
+    try:
+        row_count = body_rows.count()
+    except Exception:
+        row_count = 0
+    for index in range(row_count):
+        row = body_rows.nth(index)
+        try:
+            row_text = _clean_header(row.locator("td, th").first.inner_text(timeout=500))
+        except Exception:
+            continue
+        if row_text != row_label or row_text in {table_title, "合计"}:
+            continue
+        cell = row.locator("td, th").nth(col_idx)
+        input_loc = cell.locator("input.vxe-input--inner, input:not([type=hidden]), textarea")
+        try:
+            if input_loc.count():
+                return input_loc.first
+        except Exception:
+            continue
+    raise TargetNotFound([f"matrix={candidate.value!r} row={row_label!r}"])
+
+
 def _build(root: Page | Locator, candidate: Candidate) -> Locator:
     kind = candidate.kind
     if kind == "testid":
         return root.get_by_test_id(candidate.value)
+    if kind == "matrix":
+        return _build_matrix(root, candidate)
     if kind == "field":
         host = root.locator(f'[data-name="{candidate.value}"]')
         return host.locator(FIELD_INPUT)
     if kind == "role":
         if candidate.name:
-            return root.get_by_role(candidate.value, name=candidate.name)  # type: ignore[arg-type]
+            return root.get_by_role(
+                candidate.value,
+                name=candidate.name,
+                exact=_role_name_exact(candidate.name),
+            )  # type: ignore[arg-type]
         return root.get_by_role(candidate.value)  # type: ignore[arg-type]
     if kind == "label":
         return root.get_by_label(candidate.value)
@@ -123,6 +215,8 @@ def _build(root: Page | Locator, candidate: Candidate) -> Locator:
         return root.get_by_placeholder(candidate.value)
     if kind == "text":
         return root.get_by_text(candidate.value, exact=True)
+    if kind == "css":
+        return root.locator(sanitize_css_selector(candidate.value))
     return root.locator(candidate.value)
 
 
@@ -196,12 +290,26 @@ def _immediately_visible(locator: Locator) -> bool:
         return False
 
 
+def _locator_accepts_fill(locator: Locator, fill_value: str | None) -> bool:
+    """fill 步骤不能落到无关的只读日期框上。"""
+    if not fill_value:
+        return True
+    try:
+        if not locator_is_readonly_picker(locator):
+            return True
+    except Exception:
+        return True
+    return parse_picker_value(fill_value) is not None
+
+
 def resolve_target(
     page: Page,
     target: Target,
     timeout_ms: int = 5_000,
     memory: LocatorMemory | None = None,
     step_id: str | None = None,
+    *,
+    fill_value: str | None = None,
 ) -> LocatorResolution:
     original = target.ordered()
     ordered = memory.order(target) if memory is not None else original
@@ -224,6 +332,10 @@ def resolve_target(
             locator = _build(root, candidate).first
             if not _immediately_visible(locator):
                 continue
+            if not _locator_accepts_fill(locator, fill_value):
+                tried.append(description + " (只读日期框，跳过)")
+                failed.append(candidate)
+                continue
             tried.append(description)
             original_index = next(
                 (i for i, item in enumerate(original) if candidate_key(item) == candidate_key(candidate)),
@@ -241,11 +353,14 @@ def resolve_target(
         tried.append(description)
         wait_ms = _candidate_timeout(index, timeout_ms, len(ordered), has_preferred)
         matched = None
-        for root in roots:
+        for root_idx, root in enumerate(roots):
             try:
                 locator = _build(root, candidate).first
-                locator.wait_for(state="visible", timeout=wait_ms)
+                root_wait = _root_wait_ms(root_idx, len(roots), wait_ms)
+                locator.wait_for(state="visible", timeout=root_wait)
             except Exception:
+                continue
+            if not _locator_accepts_fill(locator, fill_value):
                 continue
             matched = locator
             break
@@ -271,6 +386,20 @@ def _candidate_timeout(index: int, timeout_ms: int, count: int, has_preferred: b
     if index == 0:
         return min(timeout_ms, max(1_200, int(timeout_ms / max(1, count))))
     return max(250, min(600, int(timeout_ms / max(1, count))))
+
+
+def _root_wait_ms(root_index: int, root_count: int, wait_ms: int) -> int:
+    """弹窗步骤会在「命名弹窗 → 通用弹窗 → 录制 css → 整页」里依次试。
+
+    若每个 root 都等满 wait_ms，一次失效候选就会空等 4× 预算（常见 20s+）。
+    只在首选 root 上等足，其余 root 做短探测。
+    """
+    if root_count <= 1:
+        return wait_ms
+    tail = min(400, max(200, wait_ms // max(2, root_count)))
+    if root_index == 0:
+        return max(400, wait_ms - tail * (root_count - 1))
+    return tail
 
 
 _DROPDOWN_PANEL = DROPDOWN_PANEL
@@ -395,6 +524,228 @@ def _is_selected_option(item) -> bool:
     except Exception:
         return False
     return False
+
+
+_DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATETIME_VALUE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})(?:[ T](?P<time>\d{1,2}:\d{2}(?::\d{2})?))?$"
+)
+
+_JS_IS_READONLY_PICKER = """
+(el) => {
+  if (!el) return false;
+  const input = el.matches('input') ? el : el.querySelector('input');
+  if (!input) return false;
+  if (!input.readOnly && !input.hasAttribute('readonly')) return false;
+  return !!(input.closest('.ant-picker, .el-date-editor'));
+}
+"""
+
+_JS_ANT_PICKER_YM = """
+(panel) => {
+  const yearBtn = panel.querySelector('.ant-picker-year-btn');
+  const monthBtn = panel.querySelector('.ant-picker-month-btn');
+  if (!yearBtn || !monthBtn) return null;
+  const year = parseInt((yearBtn.textContent || '').replace(/\\D/g, ''), 10);
+  const month = parseInt((monthBtn.textContent || '').replace(/\\D/g, ''), 10);
+  if (!year || !month) return null;
+  return { year, month };
+}
+"""
+
+
+def parse_picker_value(value: str) -> tuple[str, str | None] | None:
+    """解析日期/日期时间字符串，供 Ant DatePicker 回放。"""
+    raw = (value or "").strip()
+    if _DATE_ISO.fullmatch(raw):
+        return raw, None
+    match = _DATETIME_VALUE.fullmatch(raw)
+    if match:
+        time_part = match.group("time")
+        if time_part and len(time_part.split(":")) == 2:
+            time_part = f"{time_part}:00"
+        return match.group("date"), time_part
+    return None
+
+
+def locator_is_readonly_picker(locator: Locator) -> bool:
+    try:
+        return bool(locator.evaluate(_JS_IS_READONLY_PICKER))
+    except Exception:
+        return False
+
+
+def _open_ant_picker(
+    page: Page,
+    *,
+    trigger_css: str | None,
+    field: str | None,
+    input_locator: Locator | None = None,
+    timeout_ms: int,
+) -> None:
+    if input_locator is not None:
+        input_locator.click(timeout=timeout_ms)
+        return
+    if trigger_css:
+        page.locator(trigger_css).last.click(timeout=timeout_ms)
+        return
+    if field:
+        for sel in (
+            f'[data-name="{field}"] .ant-picker-input input',
+            f'[data-name="{field}"] .ant-picker',
+        ):
+            loc = page.locator(sel)
+            try:
+                if loc.count():
+                    loc.last.click(timeout=timeout_ms)
+                    return
+            except Exception:
+                continue
+    modal = page.locator(MODAL_VISIBLE)
+    root = modal.last if modal.count() else page
+    for sel in (
+        ".ant-picker-focused .ant-picker-input input",
+        ".ant-picker .ant-picker-input input",
+    ):
+        loc = root.locator(sel)
+        try:
+            if loc.count():
+                loc.last.click(timeout=timeout_ms)
+                return
+        except Exception:
+            continue
+
+
+def _pick_date_on_panel(
+    panel: Locator,
+    page: Page,
+    date_str: str,
+    *,
+    timeout_ms: int,
+) -> bool:
+    target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    for _ in range(40):
+        cell = panel.locator(
+            f'td.ant-picker-cell[title="{date_str}"]:not(.ant-picker-cell-disabled)'
+        )
+        try:
+            if cell.count() and cell.first.is_visible():
+                cell.first.click(timeout=min(2_000, timeout_ms))
+                page.wait_for_timeout(120)
+                return True
+        except Exception:
+            pass
+        ym = panel.evaluate(_JS_ANT_PICKER_YM)
+        if not ym:
+            break
+        current = (int(ym["year"]), int(ym["month"]))
+        goal = (target.year, target.month)
+        if current == goal:
+            break
+        btn = (
+            ".ant-picker-header-next-btn"
+            if current < goal
+            else ".ant-picker-header-prev-btn"
+        )
+        try:
+            panel.locator(btn).click(timeout=min(1_500, timeout_ms))
+            page.wait_for_timeout(80)
+        except Exception:
+            break
+    return False
+
+
+def _set_ant_picker_time(
+    panel: Locator,
+    page: Page,
+    time_str: str,
+    *,
+    timeout_ms: int,
+) -> None:
+    parts = time_str.split(":")
+    tokens = [
+        parts[0].zfill(2),
+        parts[1].zfill(2) if len(parts) > 1 else "00",
+        parts[2].zfill(2) if len(parts) > 2 else "00",
+    ]
+    for idx, val in enumerate(tokens):
+        col = panel.locator(".ant-picker-time-panel-column").nth(idx)
+        try:
+            if not col.count():
+                continue
+            cell = col.locator(f'.ant-picker-time-panel-cell-inner:text-is("{val}")')
+            if cell.count():
+                cell.first.click(timeout=min(1_000, timeout_ms))
+        except Exception:
+            continue
+    page.wait_for_timeout(80)
+
+
+def _confirm_ant_picker(panel: Locator, page: Page, *, timeout_ms: int) -> None:
+    ok = panel.locator(".ant-picker-ok")
+    try:
+        if ok.count() and ok.first.is_visible():
+            ok.first.click(timeout=min(2_000, timeout_ms))
+            page.wait_for_timeout(120)
+    except Exception:
+        pass
+
+
+def pick_ant_picker_value(
+    page: Page,
+    value: str,
+    *,
+    trigger_css: str | None = None,
+    field: str | None = None,
+    input_locator: Locator | None = None,
+    timeout_ms: int = 8_000,
+) -> bool:
+    """Ant Design 日期/日期时间控件：readonly 输入框不能 fill，走面板选值。"""
+    parsed = parse_picker_value(value)
+    if not parsed:
+        return False
+    date_str, time_str = parsed
+    panel_loc = page.locator(PICKER_PANEL_VISIBLE)
+    if panel_loc.count() == 0:
+        _open_ant_picker(
+            page,
+            trigger_css=trigger_css,
+            field=field,
+            input_locator=input_locator,
+            timeout_ms=timeout_ms,
+        )
+        panel_loc = page.locator(PICKER_PANEL_VISIBLE)
+        try:
+            panel_loc.last.wait_for(state="visible", timeout=min(3_000, timeout_ms))
+        except PlaywrightTimeout:
+            return False
+    panel = panel_loc.last
+    if not _pick_date_on_panel(panel, page, date_str, timeout_ms=timeout_ms):
+        return False
+    has_time_panel = panel.locator(".ant-picker-time-panel").count() > 0
+    if time_str or has_time_panel:
+        if time_str:
+            _set_ant_picker_time(panel, page, time_str, timeout_ms=timeout_ms)
+        _confirm_ant_picker(panel, page, timeout_ms=timeout_ms)
+    return True
+
+
+def pick_ant_date(
+    page: Page,
+    date_str: str,
+    *,
+    trigger_css: str | None = None,
+    field: str | None = None,
+    timeout_ms: int = 8_000,
+) -> bool:
+    """在 Ant Design 日期面板里选中指定日期（YYYY-MM-DD）。"""
+    return pick_ant_picker_value(
+        page,
+        date_str,
+        trigger_css=trigger_css,
+        field=field,
+        timeout_ms=timeout_ms,
+    )
 
 
 def pick_dropdown_option(page: Page, name: str, timeout_ms: int = 8_000) -> str | None:

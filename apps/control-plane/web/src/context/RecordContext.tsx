@@ -13,13 +13,15 @@ import { api } from "../api/client";
 import type {
   Compilation,
   Credential,
+  PageWidgetEntry,
   RecordStep,
   RecordingSummary,
   Worker,
 } from "../types";
-import { compileStatusLabel } from "../utils/kind";
+import { compilePathLabel, compileStatusLabel } from "../utils/kind";
 
 export type RecordStage = "idle" | "busy" | "result";
+export type ScriptSource = "observer" | "sample";
 
 type RecordContextValue = {
   stage: RecordStage;
@@ -34,6 +36,11 @@ type RecordContextValue = {
   setAiCompileEnabled: (value: boolean) => void;
   credentials: Credential[];
   eventCount: number;
+  observedEntries: PageWidgetEntry[];
+  scriptSource: ScriptSource;
+  sampleSteps: RecordStep[];
+  observerSteps: RecordStep[];
+  compilePath: string;
   waitingHint: string;
   draftSteps: RecordStep[];
   draftDirty: boolean;
@@ -47,6 +54,8 @@ type RecordContextValue = {
   startRecord: () => Promise<void>;
   stopRecord: () => Promise<void>;
   retryCompile: () => Promise<void>;
+  retryPolishCompile: () => Promise<void>;
+  switchScriptSource: (source: ScriptSource) => void;
   useFallbackSteps: () => Promise<void>;
   saveRecord: () => Promise<void>;
   cancelRecord: () => void;
@@ -100,6 +109,11 @@ export function RecordProvider({
   );
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [eventCount, setEventCount] = useState(0);
+  const [observedEntries, setObservedEntries] = useState<PageWidgetEntry[]>([]);
+  const [scriptSource, setScriptSource] = useState<ScriptSource>("observer");
+  const [sampleSteps, setSampleSteps] = useState<RecordStep[]>([]);
+  const [observerSteps, setObserverSteps] = useState<RecordStep[]>([]);
+  const [compilePath, setCompilePath] = useState("样例轨迹");
   const [waitingHint, setWaitingHint] = useState("等待执行器领取任务…");
   const [draftSteps, setDraftSteps] = useState<RecordStep[]>([]);
   const [draftDirty, setDraftDirty] = useState(false);
@@ -158,13 +172,28 @@ export function RecordProvider({
       );
   }, [siteId, siteCredentials, onLog]);
 
+  const normalizeSteps = useCallback((rows: RecordStep[]) => {
+    return rows.map((step, index) => ({
+      ...step,
+      id: step.id || `s${index + 1}`,
+    }));
+  }, []);
+
   const renderDraft = useCallback(
     (runId: string, summary: RecordingSummary, comp: Compilation | null = null) => {
-      const source = comp?.steps?.length ? comp.steps : summary.steps ?? [];
-      const steps = source.map((step, index) => ({
-        ...step,
-        id: step.id || `s${index + 1}`,
-      }));
+      const sample = normalizeSteps(
+        comp?.sample_steps ?? summary.sample_steps ?? summary.steps ?? [],
+      );
+      const observer = normalizeSteps(comp?.observer_steps ?? summary.observer_steps ?? []);
+      const path = compilePathLabel(comp?.compile_mode);
+      const preferObserver =
+        Boolean(comp?.verified && observer.length) || (observer.length > 0 && comp?.compile_mode === "observer");
+      const nextSource: ScriptSource = preferObserver ? "observer" : "sample";
+      const steps = nextSource === "observer" && observer.length ? observer : sample;
+      setSampleSteps(sample);
+      setObserverSteps(observer);
+      setScriptSource(nextSource);
+      setCompilePath(path);
       setDraftSteps(steps);
       setDraftDirty(false);
       setNotes([...new Set([...(summary.notes ?? []), ...(comp?.notes ?? [])])]);
@@ -172,10 +201,10 @@ export function RecordProvider({
       setStage("result");
       onOpenRecordTab(runId, "确认步骤");
       onLog(
-        `得到 ${steps.length} 步；${comp?.verified ? "验证通过" : "尚未验证"}`,
+        `得到 ${steps.length} 步（${path}${comp?.verified ? " · 验证通过" : ""}）`,
       );
     },
-    [intent, onLog, onOpenRecordTab],
+    [intent, normalizeSteps, onLog, onOpenRecordTab],
   );
 
   const pollCompilation = useCallback(
@@ -184,7 +213,13 @@ export function RecordProvider({
         if (pollTokenRef.current !== token) return;
         const state = await api<Compilation>(`/api/v1/recordings/${runId}/compilation`);
         setCompilation(state);
-        const label = compileStatusLabel(state.status, state.attempt, state.max_attempts);
+        const label = compileStatusLabel(
+          state.status,
+          state.attempt,
+          state.max_attempts,
+          state.compile_mode,
+        );
+        setCompilePath(compilePathLabel(state.compile_mode));
         const tokenUsage = state.usage?.output_tokens
           ? `（输入 ${state.usage.input_tokens ?? 0} / 输出 ${state.usage.output_tokens} tokens）`
           : "";
@@ -242,7 +277,7 @@ export function RecordProvider({
           status: "fallback",
           attempt: 0,
           max_attempts: 3,
-          steps: summary.steps ?? [],
+          steps: summary.sample_steps ?? summary.steps ?? [],
           notes: [message],
           verified: false,
         });
@@ -259,8 +294,11 @@ export function RecordProvider({
           status: string;
           summary: RecordingSummary;
           event_count: number;
+          observation_model?: { entries?: PageWidgetEntry[] };
+          recognized_count?: number;
         }>(`/api/v1/recordings/${runId}`);
         setEventCount(state.event_count ?? 0);
+        setObservedEntries(state.observation_model?.entries ?? []);
         updateWaitingHint(state.status);
         if (state.status === "passed") {
           await beginCompile(state.summary ?? {}, runId, token);
@@ -290,6 +328,7 @@ export function RecordProvider({
     const token = ++pollTokenRef.current;
     setStage("busy");
     setEventCount(0);
+    setObservedEntries([]);
     updateWaitingHint("queued");
     onLog("开始录制");
     try {
@@ -333,26 +372,52 @@ export function RecordProvider({
     }
   }, [recordRunId, onLog]);
 
+  const retryCompileWithMode = useCallback(
+    async (compileMode: "observer" | "polish" | null) => {
+      if (!recordRunId) return;
+      setCompileMessage(compileMode === "polish" ? "正在走润色编译…" : "正在重新编写…");
+      setCompileError(false);
+      try {
+        const next = compilation
+          ? await api<Compilation>(`/api/v1/recordings/${recordRunId}/compilation/retry`, {
+              method: "POST",
+              body: JSON.stringify({
+                intent: intent.trim() || null,
+                compile_mode: compileMode,
+              }),
+            })
+          : await api<Compilation>(`/api/v1/recordings/${recordRunId}/compile`, {
+              method: "POST",
+            });
+        setCompilation(next);
+        await pollCompilation(recordRunId, pollTokenRef.current);
+      } catch (err) {
+        setCompileMessage(`重新编译失败：${err instanceof Error ? err.message : String(err)}`);
+        setCompileError(true);
+      }
+    },
+    [recordRunId, compilation, intent, pollCompilation],
+  );
+
   const retryCompile = useCallback(async () => {
-    if (!recordRunId) return;
-    setCompileMessage("正在重新编译…");
-    setCompileError(false);
-    try {
-      const next = compilation
-        ? await api<Compilation>(`/api/v1/recordings/${recordRunId}/compilation/retry`, {
-            method: "POST",
-            body: JSON.stringify({ intent: intent.trim() || null }),
-          })
-        : await api<Compilation>(`/api/v1/recordings/${recordRunId}/compile`, {
-            method: "POST",
-          });
-      setCompilation(next);
-      await pollCompilation(recordRunId, pollTokenRef.current);
-    } catch (err) {
-      setCompileMessage(`重新编译失败：${err instanceof Error ? err.message : String(err)}`);
-      setCompileError(true);
-    }
-  }, [recordRunId, compilation, intent, pollCompilation]);
+    await retryCompileWithMode("observer");
+  }, [retryCompileWithMode]);
+
+  const retryPolishCompile = useCallback(async () => {
+    await retryCompileWithMode("polish");
+  }, [retryCompileWithMode]);
+
+  const switchScriptSource = useCallback(
+    (source: ScriptSource) => {
+      setScriptSource(source);
+      const rows = source === "observer" ? observerSteps : sampleSteps;
+      if (rows.length) {
+        setDraftSteps(rows);
+        setDraftDirty(false);
+      }
+    },
+    [observerSteps, sampleSteps],
+  );
 
   const useFallbackSteps = useCallback(async () => {
     if (!recordRunId) return;
@@ -435,6 +500,11 @@ export function RecordProvider({
     setCompileMessage("");
     setNotes([]);
     setSaveHint("");
+    setObservedEntries([]);
+    setSampleSteps([]);
+    setObserverSteps([]);
+    setScriptSource("observer");
+    setCompilePath("样例轨迹");
     summaryRef.current = null;
   }, []);
 
@@ -453,6 +523,14 @@ export function RecordProvider({
       allowUnverified = window.confirm("当前步骤未通过自动回放验证。是否仍以 draft 保存？");
       if (!allowUnverified) return;
     }
+    const verifiedObserver =
+      !draftDirty &&
+      Boolean(compilation?.verified) &&
+      (compilation?.observer_steps?.length ?? 0) > 0;
+    const stepsToSave = verifiedObserver
+      ? normalizeSteps(compilation!.observer_steps!)
+      : draftSteps;
+
     setSaveHint("正在保存…");
     try {
       const result = await api<{ flow_id: string; flow_name: string }>(
@@ -461,7 +539,7 @@ export function RecordProvider({
           method: "POST",
           body: JSON.stringify({
             name: flowName.trim() || "未命名录制",
-            steps: draftSteps,
+            steps: stepsToSave,
             allow_unverified: allowUnverified,
           }),
         },
@@ -478,6 +556,7 @@ export function RecordProvider({
     compilation,
     draftDirty,
     flowName,
+    normalizeSteps,
     onLog,
     resetRecord,
   ]);
@@ -496,6 +575,11 @@ export function RecordProvider({
       setAiCompileEnabled,
       credentials,
       eventCount,
+      observedEntries,
+      scriptSource,
+      sampleSteps,
+      observerSteps,
+      compilePath,
       waitingHint,
       draftSteps,
       draftDirty,
@@ -509,6 +593,8 @@ export function RecordProvider({
       startRecord,
       stopRecord,
       retryCompile,
+      retryPolishCompile,
+      switchScriptSource,
       useFallbackSteps,
       saveRecord,
       cancelRecord: resetRecord,
@@ -528,6 +614,11 @@ export function RecordProvider({
       setAiCompileEnabled,
       credentials,
       eventCount,
+      observedEntries,
+      scriptSource,
+      sampleSteps,
+      observerSteps,
+      compilePath,
       waitingHint,
       draftSteps,
       draftDirty,
@@ -540,6 +631,8 @@ export function RecordProvider({
       startRecord,
       stopRecord,
       retryCompile,
+      retryPolishCompile,
+      switchScriptSource,
       useFallbackSteps,
       saveRecord,
       resetRecord,

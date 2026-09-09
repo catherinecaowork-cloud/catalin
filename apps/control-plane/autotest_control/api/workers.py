@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm.attributes import flag_modified
 
 from autotest_control import crypto
 from autotest_control.ai import (
@@ -44,6 +45,7 @@ from autotest_control.domain.credentials import (
     locators_from_inspect,
 )
 from autotest_control.domain.heal import collect_heal_task, pending_heal_for_run
+from autotest_control.domain.observer import apply_snapshot_to_run
 from autotest_control.domain.jobs import project_flow_map
 from autotest_control.domain.mappers import (
     ai_config_out,
@@ -244,6 +246,9 @@ def ingest_events(run_id: str, payload: EventsIn, session: Session = Depends(get
         stored.append({"seq": seq, "type": event.type, "ts": row.ts.isoformat(), "data": data})
         if event.type == "run.start":
             run.status = "running"
+        if event.type == "observe.snapshot":
+            if apply_snapshot_to_run(run, data) is not None:
+                flag_modified(run, "observation_model")
         # 续租：执行中的长流程不该被回收
         run.lease_expires_at = now() + timedelta(seconds=settings.lease_ttl_seconds)
         seq += 1

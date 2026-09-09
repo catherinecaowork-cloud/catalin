@@ -69,6 +69,8 @@ class Flow(Base):
     imported_from: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # 黄金跑固化的基线（截图与关键数据快照）
     baseline: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # P1.2 观察者：字段/组件认识，随流程保存
+    page_widget_model: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -111,6 +113,8 @@ class Run(Base):
     stop_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     batch_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 录制过程中合并的页面认识（保存流程时写入 flow.page_widget_model）
+    observation_model: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class RunEvent(Base):
@@ -143,6 +147,9 @@ class RecordingCompilation(Base):
     intent: Mapped[str] = mapped_column(String(1000))
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     deterministic_steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    observer_steps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # observer=观察者编写；polish=仅润色；fallback=回退样例
+    compile_mode: Mapped[str] = mapped_column(String(20), default="observer")
     compiled_steps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     compile_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
     validation_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

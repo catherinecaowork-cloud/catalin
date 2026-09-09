@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 import re
 
+from autotest_adapters.oinone.selectors import field_label, sanitize_css_selector
 from autotest_executor.uploads import DEFAULT_UPLOAD
 
 # 点了这些字样的按钮多半会往被测环境写数据，dry-run 时要跳过。
@@ -48,17 +49,7 @@ _MUTATING_WORDS = (
 
 _MAX_CANDIDATES = 6
 
-_FIELD_LABELS = {
-    "brand": "品牌",
-    "basicProductType": "品类",
-    "productColors": "颜色",
-    "productSizes": "尺码",
-    "productSpecials": "特殊工艺",
-    "productCost": "成本",
-    "name": "名称",
-}
-
-_NOISE_CLICK_TEXT = {"请选择", "下拉", "搜索", "添加", "元素"}
+_NOISE_CLICK_TEXT = {"请选择", "下拉", "搜索", "添加", "元素", "输入框", "—", "-", "–", "一"}
 
 _EDIT_HINT = re.compile(r"编辑|修改|更新")
 _CREATE_HINT = re.compile(r"新建|新增")
@@ -142,7 +133,10 @@ def _clean_candidates(target: dict[str, Any] | None) -> dict[str, Any] | None:
         if key in seen:
             continue
         seen.add(key)
-        kept.append({k: v for k, v in candidate.items() if v is not None})
+        item = {k: v for k, v in candidate.items() if v is not None}
+        if item.get("kind") == "css" and item.get("value"):
+            item["value"] = sanitize_css_selector(str(item["value"]))
+        kept.append(item)
         if len(kept) >= _MAX_CANDIDATES:
             break
     if not kept:
@@ -158,6 +152,119 @@ def _clean_candidates(target: dict[str, Any] | None) -> dict[str, Any] | None:
     return cleaned
 
 
+_ANCHOR_LABEL_RE = re.compile(r':(?:text-is|has-text)\("([^"]+)"\)')
+_VXE_EPHEMERAL_CSS_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d+-\d+",
+    re.I,
+)
+
+
+def _is_anchored_css(candidate: dict[str, Any]) -> bool:
+    """同格标签锚定的选择器，如 div:has(> .label:text-is("交货日期")) …"""
+    return candidate.get("kind") == "css" and ":has(" in str(candidate.get("value") or "")
+
+
+def _matrix_label(candidate: dict[str, Any]) -> str | None:
+    if candidate.get("kind") != "matrix" or "|" not in str(candidate.get("value") or ""):
+        return None
+    row, col = str(candidate["value"]).split("|", 1)
+    title = str(candidate.get("name") or "颜色尺码").strip()
+    return f"{title} {row}×{col}"
+
+
+def _is_ephemeral_css(candidate: dict[str, Any]) -> bool:
+    if candidate.get("kind") != "css":
+        return False
+    value = str(candidate.get("value") or "")
+    return bool(_VXE_EPHEMERAL_CSS_RE.search(value))
+
+
+def _anchored_field_labels(candidates: list[dict[str, Any]]) -> set[str]:
+    labels: set[str] = set()
+    for candidate in candidates:
+        if not _is_anchored_css(candidate):
+            continue
+        match = _ANCHOR_LABEL_RE.search(str(candidate.get("value") or ""))
+        if match:
+            labels.add(match.group(1))
+    return labels
+
+
+def _prune_redundant_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """删掉已知会空等的候选，避免回放从失效首选开始等 20s+。"""
+    if not candidates:
+        return candidates
+    has_matrix = any(item.get("kind") == "matrix" for item in candidates)
+    anchor_labels = _anchored_field_labels(candidates)
+    matrix_titles = {
+        str(item.get("name") or "颜色尺码").strip()
+        for item in candidates
+        if item.get("kind") == "matrix"
+    }
+    kept: list[dict[str, Any]] = []
+    for candidate in candidates:
+        kind = candidate.get("kind")
+        value = str(candidate.get("value") or "")
+        if has_matrix:
+            if kind == "label" and value in matrix_titles:
+                continue
+            if _is_ephemeral_css(candidate):
+                continue
+        if anchor_labels:
+            if kind == "label" and value in anchor_labels:
+                continue
+            if kind == "css" and not _is_anchored_css(candidate):
+                if "ant-picker" in value and ":has(" not in value:
+                    continue
+        kept.append(candidate)
+    return kept or list(candidates)
+
+
+def _fill_candidate_rank(candidate: dict[str, Any]) -> int:
+    kind = candidate.get("kind")
+    if kind == "field":
+        return 0
+    if kind == "matrix":
+        return 0
+    if _is_anchored_css(candidate):
+        return 1
+    if kind == "testid":
+        return 2
+    if kind == "label":
+        return 3
+    if kind == "placeholder":
+        return 4
+    if kind == "role":
+        name = str(candidate.get("name") or "")
+        if name.isdigit() or len(name) <= 3:
+            return 9
+        return 5
+    if kind == "css":
+        return 6
+    if kind == "text":
+        return 7
+    return 8
+
+
+def _prioritize_fill_candidates(target: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not target or not target.get("candidates"):
+        return target
+    kept = []
+    for candidate in target["candidates"]:
+        if candidate.get("kind") == "role":
+            name = str(candidate.get("name") or "")
+            if name.isdigit() or len(name) <= 3:
+                continue
+        kept.append(candidate)
+    if not kept:
+        kept = list(target["candidates"])
+    kept = _prune_redundant_candidates(kept)
+    ranked = sorted(kept, key=_fill_candidate_rank)
+    out = dict(target)
+    out["candidates"] = ranked[:_MAX_CANDIDATES]
+    return out
+
+
 def _prioritize_click_candidates(
     target: dict[str, Any] | None, event: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
@@ -165,8 +272,9 @@ def _prioritize_click_candidates(
     if not target or not target.get("candidates"):
         return target
     prefer_field = bool(event and _is_combobox(event) and event.get("type") == "click")
+    pruned = _prune_redundant_candidates(list(target["candidates"]))
     ranked = sorted(
-        target["candidates"],
+        pruned,
         key=lambda item: _click_candidate_rank(item, prefer_field=prefer_field),
     )
     out = dict(target)
@@ -177,6 +285,8 @@ def _prioritize_click_candidates(
 def _click_candidate_rank(candidate: dict[str, Any], *, prefer_field: bool = False) -> int:
     kind = candidate.get("kind")
     value = str(candidate.get("value") or "")
+    if kind == "matrix":
+        return 0
     if kind == "testid":
         return 0
     if kind == "css" and (
@@ -189,6 +299,8 @@ def _click_candidate_rank(candidate: dict[str, Any], *, prefer_field: bool = Fal
         return 2
     if kind == "css" and (value.startswith("#tab-") or "#tab-" in value):
         return 2
+    if _is_anchored_css(candidate):
+        return 3
     if prefer_field and kind == "field":
         return 3
     if kind == "text":
@@ -231,7 +343,12 @@ def _same_element(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
         return False
     first_a = a["candidates"][0]
     first_b = b["candidates"][0]
-    return first_a["kind"] == first_b["kind"] and first_a["value"] == first_b["value"]
+    if first_a.get("kind") != first_b.get("kind"):
+        return False
+    if first_a.get("kind") == "role":
+        # 两个 button 首候选都是 role=button，必须比 name（带回 vs 新增PO）
+        return first_a.get("value") == first_b.get("value") and first_a.get("name") == first_b.get("name")
+    return first_a.get("value") == first_b.get("value")
 
 
 def _field_key(target: dict[str, Any] | None) -> tuple[str, str] | None:
@@ -247,9 +364,13 @@ def _same_open_control(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bo
     """两次都是点开同一个下拉，不是面板里点不同项。"""
     if not a or not b:
         return False
-    scope_a = (a.get("scope") or {}).get("kind")
-    scope_b = (b.get("scope") or {}).get("kind")
-    if scope_a == "dropdown" or scope_b == "dropdown":
+    scope_a = a.get("scope") or {}
+    scope_b = b.get("scope") or {}
+    if scope_a.get("kind") == "dropdown" or scope_b.get("kind") == "dropdown":
+        return False
+    name_a = str(scope_a.get("name") or "").strip()
+    name_b = str(scope_b.get("name") or "").strip()
+    if name_a and name_b and name_a != name_b:
         return False
     css_a = a.get("trigger_css")
     css_b = b.get("trigger_css")
@@ -267,7 +388,18 @@ def _same_control(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
     return bool(key_a) and key_a == _field_key(b)
 
 
-_ACTION_CLICK_WORDS = {"保存", "提交", "确定", "确认", "取消", "save", "submit", "ok"}
+_ACTION_CLICK_WORDS = {
+    "保存",
+    "提交",
+    "确定",
+    "确认",
+    "取消",
+    "带回",
+    "选择",
+    "save",
+    "submit",
+    "ok",
+}
 
 
 def _is_action_control(
@@ -279,7 +411,12 @@ def _is_action_control(
         for c in candidates
     ):
         return True
-    if "[data-action-name" in values or "oio-action" in values or "ant-btn" in values:
+    if (
+        "[data-action-name" in values
+        or "oio-action" in values
+        or "ant-btn" in values
+        or "el-button" in values
+    ):
         return True
     names = {str(text or "").strip().lower()}
     names.update(
@@ -319,6 +456,96 @@ def _is_chrome_click(event: dict[str, Any]) -> bool:
         c.get("kind") == "role" and c.get("value") in {"textbox", "searchbox", "combobox"}
         for c in candidates
     ):
+        return True
+    return False
+
+
+_DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_PICKER_DATE_MARKERS = ("ant-picker-cell", "ant-picker-dropdown", "el-date-table")
+
+
+def _picker_date_from_event(event: dict[str, Any]) -> str | None:
+    for candidate in (event.get("target") or {}).get("candidates") or []:
+        value = str(candidate.get("value") or "").strip()
+        if _DATE_ISO.fullmatch(value):
+            return value
+        if "title=" in value:
+            match = re.search(r'title="(\d{4}-\d{2}-\d{2})"', value)
+            if match:
+                return match.group(1)
+    text = str(event.get("text") or event.get("value") or "").strip()
+    if _DATE_ISO.fullmatch(text):
+        return text
+    return None
+
+
+def _is_picker_date_event(event: dict[str, Any]) -> bool:
+    if event.get("type") != "click":
+        return False
+    blob = " ".join(
+        str(c.get("value") or "")
+        for c in (event.get("target") or {}).get("candidates") or []
+    ).lower()
+    return any(marker in blob for marker in _PICKER_DATE_MARKERS)
+
+
+def _picker_field_target(event: dict[str, Any]) -> dict[str, Any]:
+    target = dict(event.get("target") or {})
+    ctx = event.get("context") or {}
+    candidates: list[dict[str, Any]] = []
+    for candidate in target.get("candidates") or []:
+        if candidate.get("kind") == "field" and candidate.get("value"):
+            candidates.append({"kind": "field", "value": candidate["value"]})
+    for candidate in target.get("candidates") or []:
+        if candidate.get("kind") == "matrix" and candidate.get("value"):
+            candidates.append(
+                {
+                    "kind": "matrix",
+                    "value": candidate["value"],
+                    "name": candidate.get("name"),
+                }
+            )
+    for candidate in target.get("candidates") or []:
+        if _is_anchored_css(candidate):
+            candidates.append({"kind": "css", "value": candidate["value"]})
+    trigger = target.get("trigger_css") or ctx.get("trigger_css")
+    if trigger and not any(c.get("value") == trigger for c in candidates):
+        candidates.append({"kind": "css", "value": trigger})
+    if not candidates:
+        candidates = list(target.get("candidates") or [])
+    out = {
+        "candidates": candidates,
+        "scope": target.get("scope"),
+        "widget": target.get("widget") or ctx.get("widget") or "ant-date-picker",
+    }
+    if trigger:
+        out["trigger_css"] = trigger
+    return out
+
+
+_DROPDOWN_SCROLL_MARKERS = (
+    "el-select-dropdown",
+    "select-options",
+    "select-body",
+    "ant-select-dropdown",
+    "el-scrollbar__view",
+    "el-scrollbar__wrap",
+)
+
+
+def _is_ephemeral_scroll(event: dict[str, Any]) -> bool:
+    """下拉/面板内滚动只为找选项，不应落成回放步骤。"""
+    if event.get("type") != "scroll":
+        return False
+    target = event.get("target") or {}
+    scope_kind = (target.get("scope") or {}).get("kind")
+    if scope_kind == "dropdown":
+        return True
+    blob = " ".join(str(c.get("value") or "") for c in target.get("candidates") or []).lower()
+    if any(marker in blob for marker in _DROPDOWN_SCROLL_MARKERS):
+        return True
+    context = event.get("context") or {}
+    if context.get("widget") in _COMBO_WIDGETS:
         return True
     return False
 
@@ -386,7 +613,157 @@ def _describe_where(context: dict[str, Any], target: dict[str, Any] | None = Non
     return f"在「{dialog}」弹窗：" if dialog else ""
 
 
+def _label_from_scope(event: dict[str, Any]) -> str | None:
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    scope = target.get("scope") or context.get("scope") or {}
+    path = str(scope.get("path") or "")
+    if "字段「" not in path:
+        return None
+    start = path.find("字段「") + 3
+    end = path.find("」", start)
+    if end <= start:
+        return None
+    label = path[start:end].strip()
+    return label if label and label not in _NOISE_CLICK_TEXT else None
+
+
+def _scope_path_chain(event: dict[str, Any]) -> str:
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    scope = target.get("scope") or context.get("scope") or {}
+    path = str(scope.get("path") or "")
+    return path.rsplit(" / ", 1)[-1] if path else ""
+
+
+def _modal_scope_name(event: dict[str, Any]) -> str:
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    scope = target.get("scope") or context.get("scope") or {}
+    return str(scope.get("name") or "").strip()
+
+
+def _is_empty_placeholder_click(event: dict[str, Any]) -> bool:
+    target = event.get("target") or {}
+    candidates = target.get("candidates") or []
+    values = " ".join(str(c.get("value") or "") for c in candidates)
+    path = _scope_path_chain(event)
+    blob = f"{values} {path}"
+    return "empty-placeholder" in blob or (
+        "info-wrap" in blob and ("form-section" in blob or "section:" in blob)
+    )
+
+
+def _label_from_section_path(event: dict[str, Any]) -> str | None:
+    """Oinone 空态加号区：section:1.选择款式信息>...>div.empty-placeholder。"""
+    chain = _scope_path_chain(event)
+    if not chain:
+        return None
+    for part in chain.split(">"):
+        if not part.startswith("section:"):
+            continue
+        raw = part.split(":", 1)[1].strip()
+        title = re.sub(r"^\d+\.\s*", "", raw).strip()
+        title = re.sub(r"信息$", "", title).strip()
+        if not title:
+            continue
+        if "加号" in title:
+            return title
+        return f"{title}加号"
+    return None
+
+
+def _placeholder_click_label(event: dict[str, Any]) -> str | None:
+    if event.get("type") != "click":
+        return None
+    section = _label_from_section_path(event)
+    if section:
+        return section
+    if _is_empty_placeholder_click(event):
+        return "加号"
+    text = str(event.get("text") or "").strip().lower()
+    if text == "plus":
+        return "加号"
+    return None
+
+
+def _label_from_path_chain(event: dict[str, Any]) -> str | None:
+    """Oinone form-container 把「*交货日期」写进 DOM 链路径，如 div:*交货日期>div>input。"""
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    scope = target.get("scope") or context.get("scope") or {}
+    path = str(scope.get("path") or "")
+    if not path:
+        return None
+    chain = path.rsplit(" / ", 1)[-1]
+    for part in reversed(chain.split(">")):
+        if ":" not in part:
+            continue
+        text = part.split(":", 1)[1].strip().lstrip("*").strip()
+        if not text or text in _NOISE_CLICK_TEXT:
+            continue
+        if len(text) == 1 and not text.isdigit():
+            continue
+        if re.match(r"^[\u4e00-\u9fffA-Za-z0-9/（）()-]{2,16}$", text):
+            return text
+    return None
+
+
+def _known_field_label(event: dict[str, Any]) -> str | None:
+    """Oinone 已知 data-name → 中文名；未知字段名不算「认识」。"""
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    for candidate in target.get("candidates") or []:
+        if candidate.get("kind") == "field" and candidate.get("value"):
+            dn = str(candidate["value"])
+            mapped = field_label(dn)
+            if mapped != dn:
+                return mapped
+    trigger = str(target.get("trigger_css") or context.get("trigger_css") or "")
+    match = re.search(r'data-name="([^"]+)"', trigger)
+    if match:
+        dn = match.group(1)
+        mapped = field_label(dn)
+        if mapped != dn:
+            return mapped
+    return None
+
+
+def _anchor_label(event: dict[str, Any]) -> str | None:
+    """从锚定选择器里读回字段名，它就是录制时同格标签的原文。"""
+    target = event.get("target") or {}
+    context = event.get("context") or {}
+    blobs = [str(c.get("value") or "") for c in target.get("candidates") or []]
+    blobs.append(str(target.get("trigger_css") or context.get("trigger_css") or ""))
+    for blob in blobs:
+        if ":has(" not in blob:
+            continue
+        match = _ANCHOR_LABEL_RE.search(blob)
+        if match:
+            name = match.group(1).strip()
+            if name and name not in _NOISE_CLICK_TEXT:
+                return name
+    return None
+
+
 def _field_name(event: dict[str, Any]) -> str:
+    target = event.get("target") or {}
+    for candidate in target.get("candidates") or []:
+        labeled = _matrix_label(candidate)
+        if labeled:
+            return labeled
+    known = _known_field_label(event)
+    if known:
+        return known
+    anchored = _anchor_label(event)
+    if anchored:
+        return anchored
+    chain_label = _label_from_path_chain(event)
+    if chain_label:
+        return chain_label
+    scope_label = _label_from_scope(event)
+    if scope_label:
+        return scope_label
     context = event.get("context") or {}
     label = str(context.get("label") or "").strip()
     if label and label not in _NOISE_CLICK_TEXT:
@@ -394,11 +771,12 @@ def _field_name(event: dict[str, Any]) -> str:
     target = event.get("target") or {}
     for candidate in target.get("candidates", []):
         if candidate["kind"] == "field" and candidate.get("value"):
-            raw = str(candidate["value"])
-            return _FIELD_LABELS.get(raw, raw)
+            return field_label(str(candidate["value"]))
         if candidate["kind"] in {"placeholder", "label"}:
-            value = str(candidate["value"] or "").strip()
-            if value and value not in _NOISE_CLICK_TEXT:
+            value = str(candidate.get("value") or "").strip()
+            if value and value not in _NOISE_CLICK_TEXT and not re.match(
+                r"^(请输入|请选择|请填写)$", value
+            ):
                 return value
     return "输入框"
 
@@ -413,32 +791,69 @@ _ICON_CLICK_NAMES = {
 }
 
 
+def _click_in_panel(event: dict[str, Any]) -> bool:
+    context = event.get("context") or {}
+    target = event.get("target") or {}
+    scope = target.get("scope") or context.get("scope") or {}
+    return scope.get("kind") == "dropdown" or bool(target.get("panel"))
+
+
 def _click_name(event: dict[str, Any]) -> str:
-    text = (event.get("text") or "").strip()
+    placeholder = _placeholder_click_label(event)
+    if placeholder:
+        return placeholder
+    modal = _modal_scope_name(event)
+    target = event.get("target") or {}
+    candidates = target.get("candidates") or []
+    for candidate in candidates:
+        labeled = _matrix_label(candidate)
+        if labeled:
+            return labeled
+    values = " ".join(str(c.get("value") or "") for c in candidates)
+    text = str(event.get("text") or "").strip()
+
+    def _reject_modal_echo(name: str) -> bool:
+        return bool(modal and name == modal and not _is_action_control(candidates, values, text))
+
+    if not _click_in_panel(event):
+        known = _known_field_label(event)
+        if known:
+            return known
+        anchored = _anchor_label(event)
+        if anchored:
+            return anchored
+        chain_label = _label_from_path_chain(event)
+        if chain_label:
+            return chain_label
+    scope_label = _label_from_scope(event)
+    if scope_label and not _reject_modal_echo(scope_label):
+        return scope_label
     if text and text.lower() not in _ICON_CLICK_NAMES and text not in _NOISE_CLICK_TEXT:
-        return text
+        if text.lower() == "plus":
+            return "加号"
+        if not _reject_modal_echo(text):
+            return text
     context = event.get("context") or {}
     label = str(context.get("label") or "").strip()
-    if label and label not in _NOISE_CLICK_TEXT:
+    if label and label not in _NOISE_CLICK_TEXT and not _reject_modal_echo(label):
         return label
-    target = event.get("target") or {}
-    for candidate in target.get("candidates", []):
+    for candidate in candidates:
         if candidate["kind"] == "field" and candidate.get("value"):
-            raw = str(candidate["value"])
-            return _FIELD_LABELS.get(raw, raw)
+            return field_label(str(candidate["value"]))
         if candidate["kind"] in {"text", "label", "placeholder"}:
-            value = str(candidate["value"] or "").strip()
+            value = str(candidate.get("value") or "").strip()
             if value and value.lower() not in _ICON_CLICK_NAMES and value not in _NOISE_CLICK_TEXT:
-                return value
+                if value.lower() == "plus":
+                    return "加号"
+                if not _reject_modal_echo(value):
+                    return value
         if candidate["kind"] == "role" and candidate.get("name"):
-            return str(candidate["name"])
-    scope = target.get("scope") or context.get("scope") or {}
-    path = str(scope.get("path") or "")
-    if "字段「" in path:
-        start = path.find("字段「") + 3
-        end = path.find("」", start)
-        if end > start:
-            return path[start:end]
+            if candidate.get("value") == "dialog":
+                continue
+            name = str(candidate["name"])
+            if _reject_modal_echo(name):
+                continue
+            return name
     return "元素"
 
 
@@ -478,6 +893,8 @@ def _prefilter(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list
             if not event.get("value") or "fakepath" in str(event.get("value") or "").lower():
                 event["value"] = DEFAULT_UPLOAD
         if _is_chrome_click(event):
+            continue
+        if _is_ephemeral_scroll(event):
             continue
         kept.append(event)
 
@@ -544,6 +961,21 @@ def compile_events(
         kind = event["type"]
 
         if kind == "click":
+            date_val = _picker_date_from_event(event)
+            if date_val and _is_picker_date_event(event):
+                field = _field_name(event)
+                steps.append(
+                    {
+                        "id": step_id,
+                        "action": "fill",
+                        "target": _picker_field_target(event),
+                        "value": date_val,
+                        "label": f"{where}填写「{field}」",
+                        "mutating": True,
+                        **_optional_fields(event),
+                    }
+                )
+                continue
             name = _click_name(event)
             steps.append(
                 {
@@ -577,7 +1009,7 @@ def compile_events(
                     {
                         "id": step_id,
                         "action": "fill",
-                        "target": event["target"],
+                        "target": _prioritize_fill_candidates(event["target"]),
                         "value": value,
                         "label": f"{where}填写「{field}」",
                         "mutating": True,

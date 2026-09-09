@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { FolderInput } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { useRunContext } from "../../context/RunContext";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import type { Flow } from "../../types";
 import { flowListSub, flowStatusText, isConfirmedFlow } from "../../utils/flow";
 import { ConfirmModal } from "../patterns/ConfirmModal";
-import { ExplorerItem } from "../patterns/ExplorerItem";
+import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
 import { PromptModal } from "../patterns/PromptModal";
-import { Button, EmptyState, Field, FootHint, ModuleHint, Select, Switch } from "../ui";
+import { Button, EmptyState, Field, FootHint, Select, Switch } from "../ui";
 import { DeleteFlowModal } from "./DeleteFlowModal";
 import { ImportFlowsModal } from "./ImportFlowsModal";
 
@@ -15,85 +16,125 @@ export function RunSidebar() {
   const ctx = useRunContext();
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Flow | null>(null);
+  const [filter, setFilter] = useState("");
   const { ask, confirmProps } = useConfirmDialog();
+
+  const nodes = useMemo((): ExplorerNode[] => {
+    const flowNodes: ExplorerNode[] = ctx.flows.map((flow) => ({
+      id: flow.id,
+      kind: "flow",
+      label: flow.name,
+      sub: flowListSub(flow, ctx.flows),
+      selected: flow.id === ctx.selectedFlowId,
+      markColor: "var(--c-run)",
+      pick: isConfirmedFlow(flow) ? (
+        <input
+          type="checkbox"
+          className="pick"
+          checked={ctx.selectedPicks.has(flow.id)}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => ctx.togglePick(flow.id, event.target.checked)}
+        />
+      ) : (
+        <span className="pick" />
+      ),
+      onSelect: () => {
+        ctx.setSelectedFlowId(flow.id);
+        ctx.onLog(`选中流程 ${flow.name}`);
+      },
+      onDelete: flow.status === "draft" ? () => setDeleteTarget(flow) : undefined,
+      deleteTitle: "删除草稿",
+    }));
+
+    const suiteNodes: ExplorerNode[] = ctx.suites.map((suite) => ({
+      id: suite.id,
+      kind: "suite",
+      label: suite.name,
+      sub: `${(suite.flow_ids ?? []).length} 条`,
+      selected: ctx.selectedSuiteId === suite.id,
+      markColor: "var(--c-record)",
+      onSelect: () => ctx.selectSuite(suite.id),
+      onDelete: () =>
+        ask({
+          title: "删除套件",
+          message: `删除套件「${suite.name}」？用例本身不会删。`,
+          variant: "danger",
+          onConfirm: () => ctx.deleteSuite(suite.id),
+        }),
+      deleteTitle: "删除套件",
+    }));
+
+    const tree: ExplorerNode[] = [];
+    if (flowNodes.length || !ctx.loading) {
+      tree.push({ id: "folder-flows", kind: "folder", label: "测试用例", children: flowNodes });
+    }
+    if (suiteNodes.length) {
+      tree.push({ id: "folder-suites", kind: "folder", label: "套件", children: suiteNodes });
+    }
+    return tree;
+  }, [
+    ask,
+    ctx.flows,
+    ctx.flows.length,
+    ctx.loading,
+    ctx.onLog,
+    ctx.selectedFlowId,
+    ctx.selectedPicks,
+    ctx.selectedSuiteId,
+    ctx.setSelectedFlowId,
+    ctx.suites,
+    ctx.suites.length,
+    ctx.selectSuite,
+    ctx.deleteSuite,
+    ctx.togglePick,
+  ]);
 
   if (!ctx.siteId) {
     return <EmptyState>先在顶栏选择或添加站点。</EmptyState>;
   }
 
+  const importAction = (
+    <button
+      type="button"
+      className="explorer-icon-btn"
+      title="从其他环境导入"
+      aria-label="从其他环境导入"
+      onClick={() => setImportOpen(true)}
+    >
+      <FolderInput size={14} strokeWidth={2} aria-hidden />
+    </button>
+  );
+
   return (
     <>
-      <ModuleHint>
-        只显示当前环境的脚本。要用别处录的，先导入再跑。勾选已确认用例可一次按序跑，或存成套件。
-      </ModuleHint>
-      <Button variant="ghost" onClick={() => setImportOpen(true)}>
-        从其他环境导入
-      </Button>
-
-      {ctx.suites.length > 0 ? (
-        <div className="suite-block">
-          <div className="explorer-label">套件</div>
-          {ctx.suites.map((suite) => (
-            <ExplorerItem
-              key={suite.id}
-              selected={ctx.selectedSuiteId === suite.id}
-              markColor="var(--c-record)"
-              name={suite.name}
-              sub={`${(suite.flow_ids ?? []).length} 条`}
-              onSelect={() => ctx.selectSuite(suite.id)}
-              onDelete={() =>
-                ask({
-                  title: "删除套件",
-                  message: `删除套件「${suite.name}」？用例本身不会删。`,
-                  variant: "danger",
-                  onConfirm: () => ctx.deleteSuite(suite.id),
-                })
-              }
-              deleteTitle="删除套件"
-            />
-          ))}
-        </div>
-      ) : null}
-
-      <div className="flow-block">
-        {ctx.loading ? (
-          <EmptyState>加载中…</EmptyState>
-        ) : ctx.flows.length === 0 ? (
-          <EmptyState>当前环境还没有脚本。到录制模块录一条，或从其他环境导入。</EmptyState>
-        ) : (
-          ctx.flows.map((flow) => (
-            <ExplorerItem
-              key={flow.id}
-              selected={flow.id === ctx.selectedFlowId}
-              markColor="var(--c-run)"
-              name={flow.name}
-              sub={flowListSub(flow, ctx.flows)}
-              pick={
-                isConfirmedFlow(flow) ? (
-                  <input
-                    type="checkbox"
-                    className="pick"
-                    checked={ctx.selectedPicks.has(flow.id)}
-                    onClick={(event) => event.stopPropagation()}
-                    onChange={(event) => ctx.togglePick(flow.id, event.target.checked)}
-                  />
-                ) : (
-                  <span className="pick" />
-                )
-              }
-              onSelect={() => {
-                ctx.setSelectedFlowId(flow.id);
-                ctx.onLog(`选中流程 ${flow.name}`);
-              }}
-              onDelete={
-                flow.status === "draft"
-                  ? () => setDeleteTarget(flow)
-                  : undefined
-              }
-            />
-          ))
-        )}
-      </div>
+      {ctx.loading ? (
+        <ExplorerTree
+          nodes={[]}
+          filter={filter}
+          onFilterChange={setFilter}
+          filterPlaceholder="搜索用例或套件…"
+          emptyMessage="加载中…"
+          filterActions={importAction}
+        />
+      ) : ctx.flows.length === 0 && ctx.suites.length === 0 ? (
+        <ExplorerTree
+          nodes={[]}
+          filter={filter}
+          onFilterChange={setFilter}
+          filterPlaceholder="搜索用例或套件…"
+          emptyMessage="当前环境还没有脚本。到录制模块录一条，或点右侧图标导入。"
+          filterActions={importAction}
+        />
+      ) : (
+        <ExplorerTree
+          nodes={nodes}
+          filter={filter}
+          onFilterChange={setFilter}
+          filterPlaceholder="搜索用例或套件…"
+          emptyMessage="没有匹配的用例或套件"
+          filterActions={importAction}
+        />
+      )}
 
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />
       <DeleteFlowModal flow={deleteTarget} onClose={() => setDeleteTarget(null)} />

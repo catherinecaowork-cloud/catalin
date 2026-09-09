@@ -540,6 +540,81 @@ def main() -> int:
         f"弹窗里的保存按钮不能当弹窗壳丢掉，实际 {save_labels}",
     )
 
+    bring_back, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "role", "value": "button", "name": "带回"},
+                        {"kind": "text", "value": "带回"},
+                        {
+                            "kind": "css",
+                            "value": "div.el-dialog__body td.el-table__cell button.el-button.is-link",
+                        },
+                    ],
+                    "scope": {"kind": "modal", "name": "款式"},
+                },
+                "text": "带回",
+                "context": {"dialog": "款式"},
+            }
+        ],
+        "http://example.test/app",
+    )
+    bring_labels = [s.get("label", "") for s in bring_back if s["action"] == "click"]
+    _assert(
+        any("带回" in label for label in bring_labels),
+        f"款式弹窗表格「带回」应编成点击步骤，实际 {bring_labels}",
+    )
+
+    lookup_flow, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "text", "value": "plus"},
+                        {"kind": "css", "value": "[aria-label=\"plus\"]"},
+                    ],
+                    "scope": {"kind": "modal", "name": "新增"},
+                },
+                "text": "plus",
+                "context": {"dialog": "新增"},
+            },
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "role", "value": "button", "name": "带回"},
+                        {"kind": "text", "value": "带回"},
+                    ],
+                    "scope": {"kind": "modal", "name": "款式"},
+                },
+                "text": "带回",
+                "context": {"dialog": "款式"},
+            },
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "role", "value": "button", "name": "新增PO"},
+                        {"kind": "text", "value": "新增PO"},
+                    ],
+                    "scope": {"kind": "modal", "name": "新增"},
+                },
+                "text": "新增PO",
+                "context": {"dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+    )
+    lookup_labels = [s.get("label", "") for s in lookup_flow if s["action"] == "click"]
+    _assert(
+        any("带回" in label for label in lookup_labels)
+        and any("新增PO" in label for label in lookup_labels),
+        f"款式「带回」不能与「新增PO」合并丢掉，实际 {lookup_labels}",
+    )
+
     upload_steps, _ = compile_events(
         [
             {
@@ -580,6 +655,194 @@ def main() -> int:
     _assert(edit_choose.get("choose_mode") == "other", "编辑弹窗的 choose 应编成换一项")
     _assert("换一项" in edit_choose["label"], "编辑步骤文案是换一项，不是选已选值")
     _assert("为 外套" not in edit_choose["label"], "编辑不要把已选的外套写成目标")
+
+    dropdown_scroll_steps, _ = compile_events(
+        [
+            {
+                "type": "choose",
+                "target": {
+                    "candidates": [{"kind": "field", "value": "brand"}],
+                    "scope": {"kind": "modal", "name": "新增"},
+                },
+                "value": "Gucci",
+                "context": {"label": "品牌", "dialog": "新增"},
+            },
+            {
+                "type": "scroll",
+                "target": {
+                    "candidates": [
+                        {
+                            "kind": "css",
+                            "value": "div.el-select-dropdown__wrap.el-scrollbar__wrap > ul.el-scrollbar__view.el-select-dropdown__list > div.select-body > div.select-options",
+                        }
+                    ],
+                    "scope": {"kind": "dropdown", "name": "新增"},
+                },
+                "value": "107",
+                "context": {"widget": "el-select", "dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增款式",
+    )
+    _assert(
+        all(s["action"] != "scroll" for s in dropdown_scroll_steps),
+        f"下拉面板内滚动不应落成步骤，实际 {dropdown_scroll_steps}",
+    )
+
+    picker_steps, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "text", "value": "2026-09-30"},
+                        {
+                            "kind": "css",
+                            "value": "tbody > tr > td.ant-picker-cell > div.ant-picker-cell-inner",
+                        },
+                    ],
+                    "scope": {"kind": "modal", "name": "新增"},
+                    "widget": "ant-date-picker",
+                    "trigger_css": '[data-name="launchDate"] .ant-picker-input input',
+                },
+                "text": "2026-09-30",
+                "context": {"label": "上市日期", "dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增款式",
+    )
+    _assert(len(picker_steps) == 2, f"日期点击应编成 fill，实际 {picker_steps}")
+    _assert(picker_steps[-1]["action"] == "fill", "日期面板点击应是 fill")
+    _assert(picker_steps[-1]["value"] == "2026-09-30", "应保留 ISO 日期")
+    _assert("填写" in picker_steps[-1]["label"], "日期步骤文案应是填写")
+
+    delivery_steps, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "field", "value": "deliveryDate"},
+                        {"kind": "role", "value": "textbox", "name": "—"},
+                        {"kind": "css", "value": '[data-name="deliveryDate"] .ant-picker-input input'},
+                    ],
+                    "scope": {
+                        "kind": "modal",
+                        "name": "新增",
+                        "path": 'modal「新增」 / 字段「—」 / div:请选择日期',
+                    },
+                    "widget": "ant-date-picker",
+                    "trigger_css": '[data-name="deliveryDate"] .ant-picker-input input',
+                },
+                "text": "",
+                "context": {"label": "—", "dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增生产单",
+    )
+    _assert(
+        delivery_steps[-1]["label"] == "在「新增」弹窗：点击「交货日期」",
+        f"data-name 应覆盖横杠占位，实际 {delivery_steps[-1]['label']}",
+    )
+
+    delivery_fill_steps, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "text", "value": "2026-09-30"},
+                        {
+                            "kind": "css",
+                            "value": "tbody > tr > td.ant-picker-cell > div.ant-picker-cell-inner",
+                        },
+                        {"kind": "field", "value": "deliveryDate"},
+                    ],
+                    "scope": {
+                        "kind": "modal",
+                        "name": "新增",
+                        "path": 'modal「新增」 / 字段「下单日期」 / td:30',
+                    },
+                    "widget": "ant-date-picker",
+                    "trigger_css": '[data-name="deliveryDate"] .ant-picker-input input',
+                },
+                "text": "2026-09-30",
+                "context": {"label": "下单日期", "dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增生产单",
+    )
+    _assert(
+        "交货日期" in delivery_fill_steps[-1]["label"],
+        f"日期 fill 应优先 field 候选而非错误 scope 标签，实际 {delivery_fill_steps[-1]['label']}",
+    )
+
+    style_plus_steps, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {
+                            "kind": "css",
+                            "value": "section.form-section > div > div.info-wrap > div.empty-placeholder",
+                        },
+                        {"kind": "text", "value": "选择款式加号"},
+                        {"kind": "label", "value": "选择款式加号"},
+                    ],
+                    "scope": {
+                        "kind": "modal",
+                        "name": "新增",
+                        "path": "modal「新增」 / section:1.选择款式信息>div>div>div",
+                    },
+                },
+                "text": "新增",
+                "context": {"dialog": "新增", "label": "选择款式加号"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增生产单",
+    )
+    _assert(
+        style_plus_steps[-1]["label"] == "在「新增」弹窗：点击「选择款式加号」",
+        f"空态加号区不能写成弹窗名新增，实际 {style_plus_steps[-1]['label']}",
+    )
+
+    oinone_date_steps, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "label", "value": "一"},
+                        {"kind": "role", "value": "textbox", "name": "一"},
+                        {
+                            "kind": "css",
+                            "value": "div > div.ant-picker.oio-date-time-picker > div.ant-picker-input > input",
+                        },
+                    ],
+                    "scope": {
+                        "kind": "modal",
+                        "name": "新增",
+                        "path": "modal「新增」 / 字段「一」 / div:*交货日期>div>div>input",
+                    },
+                    "widget": "ant-date-picker",
+                },
+                "text": "",
+                "context": {"label": "一", "dialog": "新增"},
+            },
+        ],
+        "http://example.test/app",
+        intent="新增生产单",
+    )
+    _assert(
+        oinone_date_steps[-1]["label"] == "在「新增」弹窗：点击「交货日期」",
+        f"Oinone *交货日期 路径应覆盖误采的一，实际 {oinone_date_steps[-1]['label']}",
+    )
 
     empty_steps, empty_notes = compile_events([], "http://example.test/")
     _assert(len(empty_steps) == 1, "没有任何操作时只剩 goto")

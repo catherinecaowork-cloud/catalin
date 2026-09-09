@@ -406,6 +406,10 @@ function AppWorkbenchBody({
 
             onClearLog={onClearLog}
 
+            onToggleLog={onToggleLog}
+
+            onOpenModule={openModule}
+
             onLog={onLog}
 
             onFollowBatch={(runId, title) => openRunTab(runId, title, lastHeaded)}

@@ -65,6 +65,7 @@ def flow_out(flow: Flow) -> FlowOut:
         has_baseline=flow.baseline is not None,
         setup_flow_id=flow.setup_flow_id,
         imported_from=getattr(flow, "imported_from", None),
+        page_widget_model=getattr(flow, "page_widget_model", None),
     )
 
 
@@ -127,7 +128,15 @@ def worker_out(worker: Worker) -> WorkerOut:
 
 
 def compilation_out(row: RecordingCompilation) -> CompilationOut:
-    steps = row.compiled_steps or row.deterministic_steps or []
+    sample = row.deterministic_steps or []
+    observer = row.observer_steps
+    compiled = row.compiled_steps
+    if row.status == "passed" and observer:
+        steps = observer
+    elif compiled:
+        steps = compiled
+    else:
+        steps = sample
     return CompilationOut(
         id=row.id,
         recording_run_id=row.recording_run_id,
@@ -135,6 +144,9 @@ def compilation_out(row: RecordingCompilation) -> CompilationOut:
         attempt=row.attempt,
         max_attempts=MAX_COMPILE_ATTEMPTS,
         steps=steps,
+        sample_steps=sample,
+        observer_steps=observer,
+        compile_mode=getattr(row, "compile_mode", None) or "observer",
         notes=row.compile_notes or [],
         validation_run_id=row.validation_run_id,
         usage=row.usage or {},

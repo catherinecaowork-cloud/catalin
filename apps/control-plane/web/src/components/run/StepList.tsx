@@ -1,6 +1,6 @@
 import type { RunStep } from "../../types";
 import { EmptyState } from "../ui";
-import { StepRow } from "./StepRow";
+import { RunStepGrid } from "./RunStepGrid";
 
 type Props = {
   steps: RunStep[];
@@ -19,16 +19,10 @@ export function StepList({ steps, workersOnline, waitingMessage, onOpenStepShot 
   }
 
   return (
-    <div className="step-list">
-      {steps.map((step) => (
-        <StepRow
-          key={step.stepId}
-          step={step}
-          onOpenShot={
-            step.screenshot ? () => onOpenStepShot(step.stepId) : undefined
-          }
-        />
-      ))}
-    </div>
+    <RunStepGrid
+      steps={steps}
+      variant="full"
+      onOpenStepShot={onOpenStepShot}
+    />
   );
 }
