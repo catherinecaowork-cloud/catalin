@@ -146,13 +146,12 @@ tests/                    ← selftest 收编，pytest 可跑
 
 三步，顺序不可换。每步**零行为变化**，靠上一步的产物保证安全。
 
-### 第一步：测试网（前提）
+### 第一步：测试网（进行中）
 
-- 15 个 `selftest_*.py` 收进 `tests/`，改成 pytest 断言
-- 一条命令跑完全部：`pytest`
-- 加最简 CI（Gitee 流水线或本地钩子）
-
-**验收**：`pytest` 全绿；改任意一行内核代码后，跑一次就知道有没有踩坏。
+- [x] 1.1 新增 `tests/`，`pytest tests/` 收编全部 `scripts/selftest_*.py`
+- [x] 1.2 `pyproject.toml` 增加 `[project.optional-dependencies] dev` 与 pytest 配置
+- [x] 1.3 浏览器自测缺 Chromium 时自动 skip；`scripts/run_tests.ps1` 与 `.gitee-ci.yml`
+- [ ] 1.4 逐文件把断言从 scripts 迁到 `tests/test_*.py`（可选，第二步前不阻塞）
 
 ### 第二步：拆边界
 

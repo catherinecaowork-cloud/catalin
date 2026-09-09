@@ -121,6 +121,21 @@ $env:ANTHROPIC_MODEL = "ark-code-latest"
 自测：
 
 ```powershell
+pip install -e ".[dev]"
+pytest tests/
+# 或
+.\scripts\run_tests.ps1
+```
+
+浏览器相关自测（探针、下拉任选、非必填跳过）需要本机已装 Chromium：
+
+```powershell
+playwright install chromium
+```
+
+单独脚本仍可直接跑（与 pytest 等价）：
+
+```powershell
 python scripts\selftest_compiler.py
 python scripts\selftest_variables.py
 python scripts\selftest_ai_compiler.py

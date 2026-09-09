@@ -117,7 +117,7 @@ _JS_FIELD_REQUIRED = """
   if (!el || !el.closest) return null;
   const item = el.closest('.ant-form-item, .el-form-item, .oio-form-item, [class*="form-item"], [data-name]');
   if (!item) return null;
-  if (item.querySelector('[aria-required="true"], [required]')) return true;
+  if (item.querySelector('[aria-required="true"], [required], .ant-form-item-required, .el-form-item-required, .is-required')) return true;
   const label = item.querySelector(
     'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
   );
@@ -149,7 +149,7 @@ _JS_FIELD_REQUIRED_BY_NAME = """
     productSizes: '尺码', productSpecials: '特殊工艺', productCost: '成本', name: '名称',
   };
   const check = (item) => {
-    if (item.querySelector('[aria-required="true"], [required]')) return true;
+    if (item.querySelector('[aria-required="true"], [required], .ant-form-item-required, .el-form-item-required, .is-required')) return true;
     const label = item.querySelector(
       'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
     );

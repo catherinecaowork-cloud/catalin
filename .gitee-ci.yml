@@ -1,0 +1,12 @@
+# Gitee 流水线：安装依赖并跑 pytest
+# 浏览器自测需要 Chromium；流水线里安装 playwright 浏览器
+stages:
+  - test
+
+pytest:
+  stage: test
+  image: python:3.11
+  script:
+    - pip install -e ".[dev]"
+    - playwright install chromium
+    - pytest tests/ -q

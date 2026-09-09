@@ -21,6 +21,16 @@ dependencies = [
 [project.scripts]
 runner = "autotest_executor.cli:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["apps/control-plane", "packages/protocol", "packages/executor"]
+markers = [
+    "browser: 需要本机已安装 Playwright Chromium",
+]
+
 [tool.setuptools.packages.find]
 where = ["packages/protocol", "packages/executor", "apps/control-plane"]
 
