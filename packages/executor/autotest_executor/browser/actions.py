@@ -11,6 +11,27 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin
 
+from autotest_adapters.oinone.selectors import (
+    COMBOBOX_ANCESTOR_JS,
+    CLICKABLE_ANCESTOR_XPATH,
+    DROPDOWN_MIXED_VISIBLE,
+    DROPDOWN_POPPER_VISIBLE,
+    DROPDOWN_WIDGETS,
+    CLICKABLE_VISIBLE,
+    MODAL_WRAP_VISIBLE,
+    JS_FIELD_REQUIRED,
+    JS_FIELD_REQUIRED_BY_NAME,
+    JS_INSPECT_PANEL,
+    JS_SELECTED_CHOICE,
+    MENU_ITEM_ANCESTOR_JS,
+    MODAL_TITLE_VISIBLE,
+    MODAL_VISIBLE,
+    OVERLAY_WAIT_VISIBLE,
+    SPINNER_VISIBLE,
+    is_select_trigger_css,
+    looks_like_dropdown_option,
+    panel_visible_selectors,
+)
 from autotest_executor.browser.locator import (
     LocatorMemory,
     TargetNotFound,
@@ -112,75 +133,6 @@ _NOT_FIELD = {
     "款式",
 }
 
-_JS_FIELD_REQUIRED = """
-(el) => {
-  if (!el || !el.closest) return null;
-  const item = el.closest('.ant-form-item, .el-form-item, .oio-form-item, [class*="form-item"], [data-name]');
-  if (!item) return null;
-  if (item.querySelector('[aria-required="true"], [required], .ant-form-item-required, .el-form-item-required, .is-required')) return true;
-  const label = item.querySelector(
-    'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
-  );
-  for (const node of [item, label]) {
-    if (!node) continue;
-    const cls = String(node.className || '');
-    if (/\\b(ant-form-item-required|el-form-item-required|is-required)\\b/.test(cls)) return true;
-  }
-  if (label) {
-    try {
-      const star = (getComputedStyle(label, '::before').content || '')
-        + (getComputedStyle(label, '::after').content || '');
-      if (star.includes('*')) return true;
-    } catch (err) {}
-    if (/\\*/.test(label.innerText || '')) return true;
-  }
-  return false;
-}
-"""
-
-_JS_FIELD_REQUIRED_BY_NAME = """
-(name) => {
-  if (!name) return null;
-  const items = document.querySelectorAll(
-    '.ant-form-item, .el-form-item, .oio-form-item, [class*="form-item"], [data-name]'
-  );
-  const aliases = {
-    brand: '品牌', basicProductType: '品类', productColors: '颜色',
-    productSizes: '尺码', productSpecials: '特殊工艺', productCost: '成本', name: '名称',
-  };
-  const check = (item) => {
-    if (item.querySelector('[aria-required="true"], [required], .ant-form-item-required, .el-form-item-required, .is-required')) return true;
-    const label = item.querySelector(
-      'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
-    );
-    for (const node of [item, label]) {
-      if (!node) continue;
-      const cls = String(node.className || '');
-      if (/\\b(ant-form-item-required|el-form-item-required|is-required)\\b/.test(cls)) return true;
-    }
-    if (label) {
-      try {
-        const star = (getComputedStyle(label, '::before').content || '')
-          + (getComputedStyle(label, '::after').content || '');
-        if (star.includes('*')) return true;
-      } catch (err) {}
-      if (/\\*/.test(label.innerText || '')) return true;
-    }
-    return false;
-  };
-  for (const item of items) {
-    const label = item.querySelector(
-      'label, .ant-form-item-label, .el-form-item__label, .oio-form-item-label, [class*="form-item-label"]'
-    );
-    const named = item.getAttribute && item.getAttribute('data-name');
-    const text = ((label && label.innerText) || aliases[named] || named || '')
-      .replace(/\\*/g, '').trim().split('\\n')[0];
-    if (text === name || text.startsWith(name)) return check(item);
-  }
-  return null;
-}
-"""
-
 
 def field_name_from_label(label: str | None) -> str | None:
     if not label:
@@ -244,24 +196,6 @@ def panel_choice_kind(step: Step) -> str | None:
     return None
 
 
-_JS_SELECTED_CHOICE = """
-(el) => {
-  if (!el) return '';
-  const root = el.closest('.ant-select, .el-select, [role=combobox]') || el;
-  const placeholder = root.querySelector(
-    '.ant-select-selection-placeholder, .el-select__placeholder, .ant-select-selection-item-remove'
-  );
-  const item = root.querySelector('.ant-select-selection-item, .el-select__selected-item');
-  if (item && item !== placeholder) {
-    const title = (item.getAttribute('title') || '').trim();
-    const text = (item.innerText || '').trim().split('\\n')[0];
-    if (title || text) return title || text;
-  }
-  return '';
-}
-"""
-
-
 def is_edit_context(flow_name: str | None, step_label: str | None) -> bool:
     """编辑类流程才换已选项。链式步骤看前缀「编辑款式：」，不看整条套件名。"""
     label = (step_label or "").strip()
@@ -294,22 +228,6 @@ def decide_inline_create(panel: dict[str, Any]) -> str:
     if panel.get("has_add") and panel.get("has_input") and not panel.get("has_options"):
         return "local"
     return "lookup"
-
-
-_JS_INSPECT_PANEL = """
-(el) => {
-  if (!el) return { has_tags: false, has_color: false, has_options: false, has_add: false, has_input: false };
-  const q = (sel) => !!el.querySelector(sel);
-  const text = (el.innerText || '').slice(0, 800);
-  return {
-    has_tags: q('.sizeTag, .select-options .el-tag, .el-tag--plain, .el-tag--info'),
-    has_color: q('.el-color-dropdown, .el-color-picker, .el-color-predefine, [class*="color-picker"]'),
-    has_options: q('.ant-select-item-option, .el-select-dropdown__item, [role=option]'),
-    has_add: /(?:^|\\n)\\s*(新增|添加|新建)\\s*(?:\\n|$)/.test(text) || q('[class*="add"], [class*="plus"]'),
-    has_input: q('input:not([type=hidden]):not([type=checkbox]):not([type=radio])'),
-  };
-}
-"""
 
 
 @dataclass
@@ -422,7 +340,7 @@ class ActionRunner:
                         step.id,
                         step.action,
                         "passed",
-                        data={"matched": f'menuitem[title="{name}"]', "menu": "ant-sidebar"},
+                        data={"matched": f'menuitem[title="{name}"]', "menu": "sidebar"},
                     )
         resolution = self._resolve(step)
         self._click_locator(resolution.locator, step.timeout_ms)
@@ -442,9 +360,7 @@ class ActionRunner:
         if target is None:
             return None
         looks_option = any(
-            "ant-select-item-option" in (c.value or "")
-            or "el-select-dropdown__item" in (c.value or "")
-            for c in target.candidates
+            looks_like_dropdown_option(c.value or "") for c in target.candidates
         )
         # 自定义色板/面板也常落在 dropdown scope，但不能走标准下拉搜索
         if not looks_option:
@@ -464,24 +380,17 @@ class ActionRunner:
     def _click_locator(self, locator, timeout_ms: int) -> None:
         """图标内部的 <use> 能被定位，但点击会被上层 svg 挡住。改点可点的祖先。"""
         try:
-            in_select = locator.evaluate(
-                """el => !!(el && el.closest
-                  && el.closest('.ant-select, .el-select, [role=combobox]'))"""
-            )
+            in_select = locator.evaluate(COMBOBOX_ANCESTOR_JS)
         except Exception:
             in_select = False
         if in_select:
             target = locator
         else:
-            leaf = locator.locator("xpath=ancestor-or-self::li[contains(@class,'ant-menu-item')][1]")
+            leaf = locator.locator(MENU_ITEM_ANCESTOR_JS)
             if leaf.count():
                 target = leaf
             else:
-                clickable = locator.locator(
-                    "xpath=ancestor-or-self::*[self::button or self::a "
-                    "or contains(@class,'oio-action-item') "
-                    "or @role='button' or @role='menuitem'][1]"
-                )
+                clickable = locator.locator(CLICKABLE_ANCESTOR_XPATH)
                 target = clickable if clickable.count() else locator
         try:
             target.click(timeout=timeout_ms)
@@ -565,10 +474,7 @@ class ActionRunner:
                 f'[data-name="{field}"] .el-upload__input',
                 *selectors,
             ]
-        modal = page.locator(
-            ".ant-modal-content:visible, .oio-modal-wrapper:visible, "
-            ".ant-modal-wrap:visible, [role=dialog]:visible"
-        )
+        modal = page.locator(MODAL_VISIBLE)
         root = modal.last if modal.count() else page
         for sel in selectors:
             loc = root.locator(sel)
@@ -599,9 +505,7 @@ class ActionRunner:
             self._remember_trigger(step)
             page.wait_for_timeout(250)
             try:
-                page.locator(
-                    ".ant-select-dropdown:visible, [role=listbox]:visible, .el-select__popper:visible"
-                ).last.wait_for(state="visible", timeout=min(3_000, step.timeout_ms))
+                page.locator(DROPDOWN_POPPER_VISIBLE).last.wait_for(state="visible", timeout=min(3_000, step.timeout_ms))
             except Exception:
                 pass
         else:
@@ -620,11 +524,7 @@ class ActionRunner:
         return self._dialog_looks_edit()
 
     def _dialog_looks_edit(self) -> bool:
-        loc = self.session.page.locator(
-            ".ant-modal-title:visible, .el-dialog__title:visible, "
-            "[role=dialog]:visible .oio-dialog-title, [role=dialog]:visible h1, "
-            "[role=dialog]:visible h2"
-        )
+        loc = self.session.page.locator(MODAL_TITLE_VISIBLE)
         try:
             if not loc.count():
                 return False
@@ -673,7 +573,7 @@ class ActionRunner:
                 pass
         for item in seen:
             try:
-                value = item.evaluate(_JS_FIELD_REQUIRED)
+                value = item.evaluate(JS_FIELD_REQUIRED)
             except Exception:
                 value = None
             if isinstance(value, bool):
@@ -682,7 +582,7 @@ class ActionRunner:
         if not name:
             return None
         try:
-            value = self.session.page.evaluate(_JS_FIELD_REQUIRED_BY_NAME, name)
+            value = self.session.page.evaluate(JS_FIELD_REQUIRED_BY_NAME, name)
         except Exception:
             return None
         return value if isinstance(value, bool) else None
@@ -720,7 +620,7 @@ class ActionRunner:
 
     def _read_selected_choice(self, resolution) -> str:
         try:
-            text = resolution.locator.evaluate(_JS_SELECTED_CHOICE)
+            text = resolution.locator.evaluate(JS_SELECTED_CHOICE)
             return (text or "").strip().split("\n")[0].strip()
         except Exception:
             return ""
@@ -836,7 +736,7 @@ class ActionRunner:
         if panel is None:
             return empty
         try:
-            info = panel.evaluate(_JS_INSPECT_PANEL)
+            info = panel.evaluate(JS_INSPECT_PANEL)
             if isinstance(info, dict):
                 return {**empty, **info}
         except Exception:
@@ -844,10 +744,7 @@ class ActionRunner:
         return empty
 
     def _visible_dialog_count(self) -> int:
-        loc = self.session.page.locator(
-            ".ant-modal-wrap:visible, .oio-modal-wrapper:visible, "
-            ".ant-modal-content:visible, .el-dialog:visible, [role=dialog]:visible"
-        )
+        loc = self.session.page.locator(MODAL_WRAP_VISIBLE)
         try:
             return loc.count()
         except Exception:
@@ -922,9 +819,7 @@ class ActionRunner:
         return False
 
     def _click_panel_confirm(self, root) -> bool:
-        buttons = root.locator(
-            "button:visible, [role=button]:visible, .oio-action-item:visible, .ant-btn:visible"
-        )
+        buttons = root.locator(CLICKABLE_VISIBLE)
         try:
             total = buttons.count()
         except Exception:
@@ -1051,7 +946,7 @@ class ActionRunner:
     def _settle_after_navigation(self) -> None:
         """点菜单后 SPA 还要渲染列表，立刻找「新增」会扑空。"""
         page = self.session.page
-        spin = page.locator(".ant-spin-spinning:visible, .el-loading-mask:visible, .oio-spin:visible")
+        spin = page.locator(SPINNER_VISIBLE)
         try:
             if spin.count():
                 spin.first.wait_for(state="hidden", timeout=8_000)
@@ -1067,34 +962,14 @@ class ActionRunner:
             self._last_trigger_css = target.trigger_css
         elif self._click_opens_dropdown(step):
             for cand in target.candidates:
-                if cand.kind == "css" and (
-                    "el-select__wrapper" in (cand.value or "")
-                    or "ant-select-selector" in (cand.value or "")
-                ):
+                if cand.kind == "css" and is_select_trigger_css(cand.value or ""):
                     self._last_trigger_css = cand.value
                     break
 
     def _panel_visible(self, step: Step) -> bool:
         page = self.session.page
         panel = (step.target.panel if step.target else None) or ""
-        selectors = [
-            ".ant-select-dropdown:visible",
-            ".el-select-dropdown:visible",
-            ".el-select__popper:visible",
-            ".el-popper.el-select__popper:visible",
-            ".ant-dropdown:visible",
-            "[role=listbox]:visible",
-        ]
-        if "ant-select" in panel:
-            selectors = [".ant-select-dropdown:visible"]
-        elif "el-select" in panel:
-            selectors = [
-                ".el-select-dropdown:visible",
-                ".el-select__popper:visible",
-                ".el-popper.el-select__popper:visible",
-            ]
-        elif "listbox" in panel:
-            selectors = ["[role=listbox]:visible"]
+        selectors = panel_visible_selectors(panel)
         loc = page.locator(", ".join(selectors))
         try:
             if loc.count() > 0 and loc.last.is_visible():
@@ -1131,7 +1006,7 @@ class ActionRunner:
         if target is None:
             return False
         widget = target.widget or ""
-        if widget in {"el-select", "ant-select", "combobox"}:
+        if widget in DROPDOWN_WIDGETS:
             return True
         for cand in target.candidates:
             if cand.kind == "field":
@@ -1139,21 +1014,13 @@ class ActionRunner:
             value = cand.value or ""
             if cand.kind == "role" and value == "combobox":
                 return True
-            if cand.kind == "css" and (
-                "el-select__wrapper" in value
-                or "ant-select-selector" in value
-                or (value.endswith(".el-select") and "dropdown" not in value)
-            ):
+            if cand.kind == "css" and is_select_trigger_css(value):
                 return True
         return False
 
     def _wait_dropdown(self) -> None:
         page = self.session.page
-        dropdown = page.locator(
-            ".ant-select-dropdown:visible, .el-select-dropdown:visible, "
-            ".el-select__popper:visible, .el-popper.el-select__popper:visible, "
-            ".el-popper:visible, [role=listbox]:visible, .ant-dropdown:visible"
-        )
+        dropdown = page.locator(DROPDOWN_MIXED_VISIBLE)
         try:
             dropdown.first.wait_for(state="visible", timeout=1_500)
         except Exception:
@@ -1161,12 +1028,7 @@ class ActionRunner:
 
     def _wait_overlay(self) -> None:
         page = self.session.page
-        overlay = page.locator(
-            ".ant-modal-wrap:visible, .ant-modal-content:visible, "
-            ".oio-modal-wrapper:visible, [role=dialog]:visible, "
-            ".el-dialog:visible, .el-overlay-dialog:visible, "
-            ".ant-drawer-content:visible, .el-drawer:visible"
-        )
+        overlay = page.locator(OVERLAY_WAIT_VISIBLE)
         try:
             if overlay.count():
                 return

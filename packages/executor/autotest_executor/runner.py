@@ -32,6 +32,7 @@ class RunExecutor:
         self.step_results: list[dict[str, Any]] = []
         self.drifts: list[str] = []
         self.locator_updates: list[dict[str, Any]] = []
+        self._capture_warned = False
 
     # ------------------------------------------------------------ 主流程
 
@@ -197,10 +198,21 @@ class RunExecutor:
     def _capture(self, name: str) -> str | None:
         path = self.artifacts_dir / f"{name}.png"
         try:
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
             self.session.page.screenshot(path=str(path), full_page=False)
-        except Exception:
+        except Exception as exc:
+            self._warn_capture_once(f"截图失败 {name}: {exc}")
             return None
-        return self.client.upload_artifact(self.job.run_id, f"{name}.png", path)
+        url = self.client.upload_artifact(self.job.run_id, f"{name}.png", path)
+        if url is None:
+            self._warn_capture_once(f"上传截图失败 {name}")
+        return url
+
+    def _warn_capture_once(self, message: str) -> None:
+        if self._capture_warned:
+            return
+        self._capture_warned = True
+        self._emit("log", level="warn", message=message)
 
     # ------------------------------------------------------------ 收尾
 

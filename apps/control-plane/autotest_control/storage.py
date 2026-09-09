@@ -28,7 +28,10 @@ def wipe_run_dirs(root: Path) -> None:
 
 
 def prune_retained_runs() -> None:
+    """只清理控制面已上传的产物目录。
+
+    worker 工作区由执行器在任务结束后自行删除；控制面在这里 wipe 会把
+    正在运行的任务本地截图目录删掉，导致 upload_artifact 全部失败。
+    """
     keep = int(getattr(settings, "artifact_keep_runs", 5))
     prune_run_dirs(settings.artifacts_dir, keep)
-    for name in ("worker", "worker-ui", "worker-headless"):
-        wipe_run_dirs(settings.var_dir / name)

@@ -230,6 +230,25 @@ class RecordExecutor:
             return path
         return urljoin(base + "/", path.lstrip("/"))
 
+    def _capture(self, name: str) -> str | None:
+        path = self.artifacts_dir / f"{name}.png"
+        try:
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+            self.session.page.screenshot(path=str(path), full_page=False)
+        except Exception as exc:
+            self._warn_capture_once(f"截图失败 {name}: {exc}")
+            return None
+        url = self.client.upload_artifact(self.job.run_id, f"{name}.png", path)
+        if url is None:
+            self._warn_capture_once(f"上传截图失败 {name}")
+        return url
+
+    def _warn_capture_once(self, message: str) -> None:
+        if getattr(self, "_capture_warned", False):
+            return
+        self._capture_warned = True
+        self._emit("log", level="warn", message=message)
+
     def _goto_start(self) -> None:
         url = self._start_url()
         self._emit("step.start", step_id="record.goto", action="goto", label=f"打开 {url}")
@@ -243,6 +262,7 @@ class RecordExecutor:
             label=f"打开 {url}",
             status="passed",
             data={"url": self.start_url},
+            screenshot=self._capture("record_goto"),
         )
         self._emit("log", level="info", message=f"开始录制：{self.start_url}")
 
@@ -402,6 +422,7 @@ class RecordExecutor:
             status=outcome.status,
             message=outcome.message,
             data=outcome.data,
+            screenshot=self._capture(f"login_{index:02d}_{step.id}"),
         )
         return outcome
 

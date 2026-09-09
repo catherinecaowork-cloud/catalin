@@ -26,13 +26,13 @@ dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["apps/control-plane", "packages/protocol", "packages/executor"]
+pythonpath = ["apps/control-plane", "packages/protocol", "packages/executor", "packages/adapters"]
 markers = [
     "browser: 需要本机已安装 Playwright Chromium",
 ]
 
 [tool.setuptools.packages.find]
-where = ["packages/protocol", "packages/executor", "apps/control-plane"]
+where = ["packages/protocol", "packages/executor", "packages/adapters", "apps/control-plane"]
 
 [tool.setuptools.package-data]
 autotest_executor = ["browser/*.js"]

@@ -17,28 +17,22 @@ from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeout
 from autotest_protocol import Candidate, Target, learn_candidates
 from autotest_protocol.dsl import candidate_key
 
-_LIVE_MODAL = (
-    ".ant-modal-wrap.oio-modal-wrapper, "
-    ".oio-modal-wrapper, "
-    ".ant-modal-wrap[role=dialog], "
-    ".ant-modal-content, "
-    "[role=dialog], "
-    "dialog[open], "
-    ".ant-drawer-content, "
-    ".el-dialog, "
-    ".oio-modal"
-)
-_LIVE_DROPDOWN = (
-    ".ant-select-dropdown:visible, .ant-dropdown:visible, "
-    ".ant-picker-dropdown:visible, .ant-cascader-dropdown:visible, "
-    ".ant-cascader-menus:visible, "
-    ".ant-popover:visible, "
-    ".el-select-dropdown:visible, "
-    ".el-color-dropdown:visible, "
-    ".el-popper.el-select__popper:visible, "
-    ".el-select__popper:visible, "
-    ".el-popper:visible, "
-    "[role=listbox]:visible"
+from autotest_adapters.oinone.navigation import click_sidebar_menu as click_ant_sidebar_menu
+from autotest_adapters.oinone.selectors import (
+    DROPDOWN_OPTION,
+    DROPDOWN_OPTION_ACTIVE,
+    DROPDOWN_PANEL,
+    DROPDOWN_SEARCH,
+    DROPDOWN_SCROLL_HOLDER,
+    DROPDOWN_VIRTUAL_HOLDER,
+    FIELD_INPUT,
+    LIVE_DROPDOWN,
+    LIVE_MODAL,
+    OPTION_BY_TITLE,
+    PANEL_TAB,
+    PANEL_TAG,
+    SELECTED_OPTION_TOKENS,
+    SKIP_OPTION_LABELS,
 )
 
 
@@ -118,14 +112,7 @@ def _build(root: Page | Locator, candidate: Candidate) -> Locator:
         return root.get_by_test_id(candidate.value)
     if kind == "field":
         host = root.locator(f'[data-name="{candidate.value}"]')
-        return host.locator(
-            "input:not([type=hidden]):not([type=file]):not(.is-hidden):not(.ant-select-selection-search-input), "
-            "textarea, "
-            ".ant-select-selector, "
-            ".el-select__wrapper, "
-            ".el-select, "
-            "[contenteditable=true]"
-        )
+        return host.locator(FIELD_INPUT)
     if kind == "role":
         if candidate.name:
             return root.get_by_role(candidate.value, name=candidate.name)  # type: ignore[arg-type]
@@ -160,18 +147,18 @@ def _roots_for(page: Page, target: Target) -> list[Page | Locator]:
     kind = (target.scope.kind if target.scope else None) or "page"
     roots: list[Page | Locator] = []
     if kind == "dropdown":
-        dropdown = _try_root(page, _LIVE_DROPDOWN)
+        dropdown = _try_root(page, LIVE_DROPDOWN)
         if dropdown is not None:
             roots.append(dropdown)
-        modal = _try_root(page, _LIVE_MODAL)
+        modal = _try_root(page, LIVE_MODAL)
         if modal is not None:
             roots.append(modal)
         roots.append(page)
         return roots
     if kind in {"modal", "drawer"}:
-        modal = _try_root(page, _LIVE_MODAL)
+        modal = _try_root(page, LIVE_MODAL)
         if target.scope and target.scope.name:
-            named = page.locator(_LIVE_MODAL).filter(has_text=target.scope.name)
+            named = page.locator(LIVE_MODAL).filter(has_text=target.scope.name)
             picked = _try_root_locator(named)
             if picked is not None:
                 roots.append(picked)
@@ -286,36 +273,12 @@ def _candidate_timeout(index: int, timeout_ms: int, count: int, has_preferred: b
     return max(250, min(600, int(timeout_ms / max(1, count))))
 
 
-_DROPDOWN_PANEL = (
-    ".ant-select-dropdown:visible, .el-select-dropdown:visible, "
-    ".ant-cascader-dropdown:visible, .ant-cascader-menus:visible, "
-    ".el-popper.el-select__popper:visible, .el-select__popper:visible, "
-    "[role=listbox]:visible"
-)
-_DROPDOWN_SEARCH = (
-    ".ant-select-open .ant-select-selection-search-input, "
-    ".ant-select-dropdown:visible input, "
-    ".el-select__popper:visible input, "
-    ".el-select-dropdown:visible input, "
-    "[role=listbox]:visible input"
-)
-_DROPDOWN_OPTION = (
-    ".ant-select-item-option:not(.ant-select-item-option-disabled), "
-    ".ant-select-item:not(.ant-select-item-group):not(.ant-select-item-empty):not(.ant-select-item-option-disabled), "
-    ".el-select-dropdown__item:not(.is-disabled), "
-    "[role=option], "
-    ".ant-select-dropdown .ant-table-row, "
-    ".ant-dropdown-menu-item:not(.ant-dropdown-menu-item-disabled)"
-)
-_SKIP_OPTION_LABELS = {"新增", "添加", "新建", "无数据", "暂无数据", "无匹配结果", "无匹配数据"}
-_PANEL_TAB = ".el-tabs__item:visible, [role=tab]:visible"
-_PANEL_TAG = (
-    ".el-tab-pane[aria-hidden='false'] .sizeTag .el-tag .el-tag__content:visible, "
-    ".el-tab-pane:visible .sizeTag .el-tag .el-tag__content:visible, "
-    ".sizeTag .el-tag .el-tag__content:visible, "
-    ".select-options .el-tag pre:visible, "
-    ".select-options .el-tag .el-tag__content:visible"
-)
+_DROPDOWN_PANEL = DROPDOWN_PANEL
+_DROPDOWN_SEARCH = DROPDOWN_SEARCH
+_DROPDOWN_OPTION = DROPDOWN_OPTION
+_SKIP_OPTION_LABELS = SKIP_OPTION_LABELS
+_PANEL_TAB = PANEL_TAB
+_PANEL_TAG = PANEL_TAG
 
 
 def _visible_dropdown_panel(page: Page):
@@ -425,7 +388,7 @@ def _is_selected_option(item) -> bool:
     try:
         cls = item.get_attribute("class") or ""
         tokens = cls.split()
-        if "ant-select-item-option-selected" in tokens or "selected" in tokens or "is-selected" in tokens:
+        if any(token in tokens for token in SELECTED_OPTION_TOKENS):
             return True
         if (item.get_attribute("aria-selected") or "").lower() == "true":
             return True
@@ -449,8 +412,7 @@ def pick_dropdown_option(page: Page, name: str, timeout_ms: int = 8_000) -> str 
     _fill_dropdown_search(page, panel, name, timeout_ms)
 
     option = panel.locator(
-        f'.ant-select-item-option[title="{name}"], '
-        f'.el-select-dropdown__item:text-is("{name}")'
+        OPTION_BY_TITLE.format(name=name) + f', .el-select-dropdown__item:text-is("{name}")'
     )
     size_tag = panel.locator(
         ".el-tab-pane[aria-hidden='false'] .sizeTag .el-tag .el-tag__content, "
@@ -460,9 +422,7 @@ def pick_dropdown_option(page: Page, name: str, timeout_ms: int = 8_000) -> str 
         name, exact=True
     )
     by_text = panel.get_by_text(name, exact=True)
-    holder = panel.locator(
-        ".rc-virtual-list-holder, .rc-virtual-list, .el-scrollbar__wrap, .el-select-dropdown__wrap"
-    )
+    holder = panel.locator(DROPDOWN_SCROLL_HOLDER)
 
     deadline = timeout_ms
     steps = max(8, int(deadline / 150))
@@ -517,12 +477,7 @@ def _pick_next_by_keyboard(page: Page, skip_norm: set[str]) -> str | None:
         page.wait_for_timeout(120)
     except Exception:
         return None
-    active = page.locator(
-        ".ant-select-item-option-active:visible, "
-        ".el-select-dropdown__item.hover:visible, "
-        ".el-select-dropdown__item.is-hovering:visible, "
-        "[role=option][aria-selected=true]:visible"
-    )
+    active = page.locator(DROPDOWN_OPTION_ACTIVE)
     label = ""
     try:
         if active.count():
@@ -623,10 +578,7 @@ def pick_first_dropdown_option(
     clear_dropdown_search(page)
     panel = _visible_dropdown_panel(page) or panel
     skip_norm = {str(item).strip() for item in (skip or []) if item and str(item).strip()}
-    holder = panel.locator(
-        ".rc-virtual-list-holder, .rc-virtual-list, .el-scrollbar__wrap, "
-        ".el-select-dropdown__wrap, .ant-table-body"
-    )
+    holder = panel.locator(DROPDOWN_VIRTUAL_HOLDER)
     steps = max(6, int(timeout_ms / 150))
     for _ in range(steps):
         picked = _scan_dropdown_options(panel, skip_norm, skip_selected, timeout_ms)
@@ -643,43 +595,6 @@ def pick_first_dropdown_option(
     if skip_selected:
         return _pick_next_by_keyboard(page, skip_norm)
     return _click_first_match(panel.locator(_PANEL_TAG), skip_norm, timeout_ms)
-
-
-def click_ant_sidebar_menu(page: Page, name: str, timeout_ms: int) -> bool:
-    """Oinone / Ant Design 侧栏：父级是 submenu-title，真正开页的是隐藏的 menuitem。
-
-    父级「款式」和子项「款式」同名。text='款式' 会点到父级，子 ul 仍是 display:none，
-    首页页签不会出现。这里先展开再点 li.ant-menu-item[title=名称]。
-    """
-    item = page.locator(f'li.ant-menu-item[role="menuitem"][title="{name}"]')
-    title = page.locator("div.ant-menu-submenu-title").filter(
-        has=page.locator(f'span[title="{name}"]')
-    )
-    if item.count() == 0 and title.count() == 0:
-        return False
-
-    try:
-        if item.count() and item.first.is_visible():
-            item.first.click(timeout=timeout_ms)
-            return True
-    except Exception:
-        pass
-
-    if title.count() == 0:
-        return False
-
-    header = title.first
-    try:
-        expanded = header.get_attribute("aria-expanded")
-        if expanded != "true":
-            header.click(timeout=timeout_ms)
-        item.first.wait_for(state="visible", timeout=timeout_ms)
-        item.first.click(timeout=timeout_ms)
-        return True
-    except PlaywrightTimeout:
-        return False
-    except Exception:
-        return False
 
 
 class TargetStillVisible(Exception):
