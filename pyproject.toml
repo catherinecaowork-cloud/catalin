@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autotest-platform"
+version = "0.0.1"
+description = "通用接口 / UI 自动化测试平台（P0 纵向切片）"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.9",
+    "httpx>=0.27",
+    "playwright==1.49.1",
+    "cryptography>=42",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+runner = "autotest_executor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["packages/protocol", "packages/executor", "apps/control-plane"]
+
+[tool.setuptools.package-data]
+autotest_executor = ["browser/*.js"]
+autotest_control = ["static/*.html"]

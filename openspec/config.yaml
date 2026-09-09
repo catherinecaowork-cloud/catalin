@@ -1,0 +1,37 @@
+schema: spec-driven
+
+context: |
+  项目：通用接口 / UI 自动化测试平台（autotest-platform）
+  定位：多租户 Web 控制面（FastAPI）+ 可部署执行器 Worker（Python + Playwright）。
+       用户接入任意站点（URL + 登录凭证），用确定性回放做日常回归，AI 只做探索 / 编译 / 审查。
+
+  已拍板的技术决议（不要在 artifact 里重新讨论）：
+  - 浏览器驱动只用 Playwright，锁 1.49.1；不引入 browser-use（探索产物必须能被回放引擎执行）
+  - 控制面 FastAPI + Postgres + MinIO；P0 前端为静态页 + SSE，P1 才上 Vue 3
+  - Worker 长轮询拉任务，平台不反向连接（被测系统多在内网 / NAT 后）
+  - 部署为内网单机 Docker Compose；Windows 用 pip 装 Worker 跑开窗，容器 Worker 跑 CI 无头
+  - 任务队列用 Postgres 任务表 + FOR UPDATE SKIP LOCKED，P0 不引 Redis
+  - LLM 走公司统一网关，密钥进 credential 表；P0 不写任何 LLM 调用代码
+  - 平台不把 pytest 当执行内核；Allure 仅作可选导出
+
+  P0 范围与红线：
+  - P0 只做 L1（接口重放）+ L2（Playwright 回放），零 LLM 调用
+  - Router / Explorer / Compiler / Reviewer 属于 P1，不在本 change 内
+  - Go/No-Go：P0 全部验收项须在 2 个真实非 MES 站点上跑通
+
+  上下文来源：D:\project\mes-test-platform\docs\autotest-platform-feasibility.md（形态与可行性）
+              D:\project\mes-test-platform\docs\autotest-platform-tech-design.md（技术方案）
+  MES 现仓库（mes-test-platform）不动，仅作为 adapters/oinone 的素材来源与第一个内部客户。
+
+  语言约定：文档与规格描述使用简体中文；WHEN / THEN / SHALL 等规格关键词保留英文。
+
+rules:
+  proposal:
+    - 只写 why 与 what，实现细节留给 design.md
+    - 不重复技术方案文档里的选型论证，直接引用结论
+  specs:
+    - 每条 Requirement 必须是可验收的外部行为，不写实现步骤
+    - 场景要能落成自动化验收，避免「应该更稳定」这类不可判定描述
+  tasks:
+    - 任务按技术方案 §9 的 9 步施工顺序组织，每步都带验收标准
+    - 不引入 P1 的 AI 相关任务

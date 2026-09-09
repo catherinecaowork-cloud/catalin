@@ -1,0 +1,248 @@
+"""一次运行的执行过程。
+
+事件在这里产生：步骤开始、步骤结束、探针告警、断言结论。
+平台不需要解析日志文本就能知道跑到哪、成没成。
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+from autotest_executor.auth import (
+    UnsupportedLoginChallenge,
+    build_material,
+    detect_login_challenge,
+    form_login_steps,
+)
+from autotest_executor.browser.actions import ActionRunner, StepOutcome
+from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
+from autotest_executor.client import ControlPlaneClient
+from autotest_executor.variables import resolve_steps
+from autotest_protocol import Job, Step, new_event
+
+
+class RunExecutor:
+    def __init__(self, client: ControlPlaneClient, job: Job, workspace: Path) -> None:
+        self.client = client
+        self.job = job
+        self.artifacts_dir = workspace / job.run_id
+        self.session = BrowserSession(job, self.artifacts_dir)
+        self.step_results: list[dict[str, Any]] = []
+        self.drifts: list[str] = []
+        self.locator_updates: list[dict[str, Any]] = []
+
+    # ------------------------------------------------------------ 主流程
+
+    def execute(self) -> str:
+        started = time.monotonic()
+        flow = self.job.flow
+        self._emit(
+            "run.start",
+            run_id=self.job.run_id,
+            flow=flow.name if flow else None,
+            headless=self.job.options.headless,
+            dry_run=self.job.options.dry_run,
+            base_url=self.job.site.base_url,
+        )
+
+        status = "passed"
+        try:
+            flow_steps = resolve_steps(flow.steps, self.job.variables) if flow is not None else []
+            material = self._resolve_auth()
+            self.session.start(cookies=material.cookies, extra_headers=material.headers)
+
+            steps: list[Step] = []
+            if material.form is not None:
+                steps.extend(form_login_steps(material.form, self.job.site.base_url))
+            steps.extend(flow_steps)
+
+            runner = ActionRunner(self.session)
+            try:
+                for index, step in enumerate(steps, start=1):
+                    outcome = self._run_step(runner, step, index, len(steps))
+                    if outcome.status == "failed":
+                        status = "failed"
+                        break
+            finally:
+                self.locator_updates = runner.locator_memory.updates
+        except HeadedNotSupported as exc:
+            # 明确失败，不静默降级成无头
+            self._emit("log", level="error", message=str(exc), reason="headed_not_supported")
+            status = "error"
+        except UnsupportedLoginChallenge as exc:
+            self._emit("log", level="error", message=str(exc), reason="login_unsupported")
+            status = "error"
+        except Exception as exc:  # noqa: BLE001
+            self._emit("log", level="error", message=f"{type(exc).__name__}: {exc}")
+            status = "error"
+
+        duration = time.monotonic() - started
+        self._finish(status, duration)
+        return status
+
+    # ------------------------------------------------------------ 步骤
+
+    def _run_step(self, runner: ActionRunner, step: Step, index: int, total: int) -> StepOutcome:
+        self._emit(
+            "step.start",
+            step_id=step.id,
+            action=step.action,
+            label=step.display(),
+            index=index,
+            total=total,
+        )
+        started = time.monotonic()
+        outcome = runner.run(step)
+        elapsed = time.monotonic() - started
+
+        watch_toast = outcome.status != "skipped" and step.action in {
+            "click",
+            "choose",
+            "fill",
+            "select",
+            "upload",
+        }
+        if watch_toast:
+            try:
+                self.session.page.wait_for_timeout(400)
+            except Exception:
+                pass
+
+        screenshot_url = None
+        if self.job.options.screenshot_each_step and outcome.status != "skipped":
+            screenshot_url = self._capture(f"{index:02d}_{step.id}")
+
+        if watch_toast:
+            self._attach_page_toasts(outcome)
+
+        if outcome.drift:
+            self.drifts.append(outcome.drift)
+            self._emit("probe.alert", kind="locator_drift", step_id=step.id, message=outcome.drift)
+
+        if step.action in {"pageHealth"} or step.assert_kind == "no_page_error":
+            counts = outcome.data.get("counts", {})
+            if any(counts.values()):
+                self._emit(
+                    "probe.alert",
+                    kind="page_error",
+                    step_id=step.id,
+                    counts=counts,
+                    js_errors=outcome.data.get("jsErrors", []),
+                    request_errors=outcome.data.get("requestErrors", []),
+                )
+
+        if step.action == "assert":
+            self._emit(
+                "assert",
+                step_id=step.id,
+                kind=step.assert_kind,
+                status=outcome.status,
+                message=outcome.message,
+                detail=outcome.data,
+            )
+
+        self._emit(
+            "step.end",
+            step_id=step.id,
+            action=step.action,
+            label=step.display(),
+            status=outcome.status,
+            message=outcome.message,
+            data=outcome.data,
+            drift=outcome.drift,
+            elapsed_ms=int(elapsed * 1000),
+            screenshot=screenshot_url,
+        )
+        self.step_results.append(
+            {
+                "step_id": step.id,
+                "action": step.action,
+                "label": step.display(),
+                "status": outcome.status,
+                "message": outcome.message,
+                "elapsed_ms": int(elapsed * 1000),
+                "drift": outcome.drift,
+            }
+        )
+        return outcome
+
+    def _attach_page_toasts(self, outcome: StepOutcome) -> None:
+        """点完后扫右上角失败弹出，把原文挂到这一步。成功提示忽略。"""
+        try:
+            errors = self.session.consume_ui_errors()
+        except Exception:
+            errors = []
+        texts: list[str] = []
+        for item in errors:
+            message = str((item or {}).get("message") or "").strip()
+            if message and message not in texts:
+                texts.append(message)
+        if not texts:
+            return
+        joined = "；".join(texts)
+        self._emit("probe.alert", kind="ui_error", message=joined, step_id=outcome.step_id)
+        outcome.data = dict(outcome.data or {})
+        outcome.data["uiErrors"] = texts
+        prefix = "页面报错：" + joined
+        if outcome.status == "passed":
+            outcome.status = "failed"
+            outcome.message = prefix
+        elif outcome.message:
+            outcome.message = f"{outcome.message}；{prefix}"
+        else:
+            outcome.message = prefix
+
+    def _capture(self, name: str) -> str | None:
+        path = self.artifacts_dir / f"{name}.png"
+        try:
+            self.session.page.screenshot(path=str(path), full_page=False)
+        except Exception:
+            return None
+        return self.client.upload_artifact(self.job.run_id, f"{name}.png", path)
+
+    # ------------------------------------------------------------ 收尾
+
+    def _resolve_auth(self):
+        payload = None
+        if self.job.auth.type != "none" and self.job.auth.ref:
+            material = self.client.credential_material(self.job.auth.ref)
+            if material is None:
+                raise RuntimeError("无法获取凭证，登录失败")
+            payload = material.get("payload")
+        return build_material(self.job.auth, payload, self.job.site.base_url)
+
+    def _finish(self, status: str, duration: float) -> None:
+        keep_evidence = status != "passed"
+        produced: dict[str, str] = {}
+        try:
+            produced = self.session.stop(keep_trace=keep_evidence)
+        except Exception:
+            produced = {}
+
+        artifacts: dict[str, str] = {}
+        for kind, local_path in produced.items():
+            path = Path(local_path)
+            if path.exists():
+                url = self.client.upload_artifact(self.job.run_id, f"{kind}{path.suffix}", path)
+                if url:
+                    artifacts[kind] = url
+
+        passed = sum(1 for r in self.step_results if r["status"] == "passed")
+        failed = sum(1 for r in self.step_results if r["status"] == "failed")
+        skipped = sum(1 for r in self.step_results if r["status"] == "skipped")
+        summary = {
+            "steps": self.step_results,
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "drifts": self.drifts,
+            "locator_updates": self.locator_updates,
+            "artifacts": artifacts,
+        }
+        self._emit("run.end", status=status, passed=passed, failed=failed, skipped=skipped)
+        self.client.complete(self.job.run_id, status, summary, duration)
+
+    def _emit(self, type_: str, **data: Any) -> None:
+        self.client.post_events(self.job.run_id, [new_event(type_, **data)])  # type: ignore[arg-type]
