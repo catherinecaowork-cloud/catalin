@@ -35,6 +35,7 @@ export type Flow = {
   auth_type: string;
   has_baseline: boolean;
   setup_flow_id: string | null;
+  setup_flow_ids?: string[];
   imported_from: string | null;
   page_widget_model?: PageWidgetModel | null;
 };
@@ -99,6 +100,18 @@ export type Credential = {
   name: string;
   type: string;
   updated_at: string;
+};
+
+export type RecordLiveAction = {
+  index: number;
+  type: string;
+  url?: string | null;
+  text?: string | null;
+  value?: string | null;
+  label?: string | null;
+  dialog?: string | null;
+  scope?: string | null;
+  candidates?: Array<{ kind?: string; value?: string }>;
 };
 
 export type RecordStep = {

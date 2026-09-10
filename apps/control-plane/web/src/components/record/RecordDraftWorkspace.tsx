@@ -12,6 +12,7 @@ import {
 } from "../patterns/ModuleToolbar";
 import { EditorView } from "../layout/EditorLayout";
 import { DraftStepList } from "./DraftStepList";
+import { RecordSidebarFoot } from "./RecordSidebar";
 
 export function RecordDraftWorkspace() {
   const ctx = useRecordContext();
@@ -61,12 +62,20 @@ export function RecordDraftWorkspace() {
 
   return (
     <EditorView toolbar={toolbar} bodyClassName="draft-workspace">
-      <DraftStepList
-        steps={ctx.draftSteps}
-        onUpdate={(index, patch) => ctx.updateStep(index, patch)}
-        onDelete={(index) => ctx.deleteStep(index)}
-        onMakeUniqueValue={(index) => ctx.setStepUniqueValue(index)}
-      />
+      <div className="draft-workspace-split">
+        <DraftStepList
+          steps={ctx.draftSteps}
+          onUpdate={(index, patch) => ctx.updateStep(index, patch)}
+          onDelete={(index) => ctx.deleteStep(index)}
+          onMoveUp={(index) => ctx.moveStepUp(index)}
+          onMoveDown={(index) => ctx.moveStepDown(index)}
+          onAdd={(action, afterIndex) => ctx.addDraftStep(action, afterIndex)}
+          onMakeUniqueValue={(index) => ctx.setStepUniqueValue(index)}
+        />
+        <aside className="record-save-panel">
+          <RecordSidebarFoot />
+        </aside>
+      </div>
     </EditorView>
   );
 }

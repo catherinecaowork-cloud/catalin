@@ -86,6 +86,12 @@ def import_flows_to_site(
         copies.append((source, copied))
 
     for source, copied in copies:
+        setup_ids = list(getattr(source, "setup_flow_ids", None) or [])
+        if setup_ids:
+            mapped = [id_map[sid] for sid in setup_ids if sid in id_map]
+            copied.setup_flow_ids = mapped
+            copied.setup_flow_id = mapped[-1] if mapped else None
+            continue
         setup_id = getattr(source, "setup_flow_id", None)
         if setup_id:
             copied.setup_flow_id = id_map.get(setup_id)

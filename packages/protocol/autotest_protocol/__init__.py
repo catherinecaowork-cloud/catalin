@@ -18,7 +18,13 @@ from autotest_protocol.dsl import (
     learn_candidates,
     sort_candidates,
 )
-from autotest_protocol.events import Event, EventType, new_event, new_observe_snapshot_event
+from autotest_protocol.events import (
+    Event,
+    EventType,
+    new_event,
+    new_observe_snapshot_event,
+    new_record_action_event,
+)
 from autotest_protocol.observer import (
     LayerKind,
     LayerRef,
@@ -79,6 +85,7 @@ __all__ = [
     "merge_snapshot_into_model",
     "new_event",
     "new_observe_snapshot_event",
+    "new_record_action_event",
     "observation_snapshot_from_event_data",
     "sort_candidates",
 ]

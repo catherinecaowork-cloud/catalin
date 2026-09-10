@@ -999,7 +999,7 @@ def compile_events(
                     {
                         "id": step_id,
                         "action": "choose",
-                        "target": event["target"],
+                        "target": _prioritize_fill_candidates(event["target"]),
                         "mutating": False,
                         **chosen,
                     }

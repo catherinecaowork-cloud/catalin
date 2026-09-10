@@ -253,7 +253,9 @@
       candidates.push({ kind: 'placeholder', value: el.placeholder });
     }
 
-    if (text) candidates.push({ kind: 'text', value: text });
+    const selectLike = !!(closestOf(raw, '.el-select, .ant-select:not(.ant-select-dropdown), [role=combobox]'));
+    const placeholderText = /^(请选择|请输入|请填写|搜索)/.test((text || '').trim());
+    if (text && !(selectLike && placeholderText)) candidates.push({ kind: 'text', value: text });
 
     const tabId = el.matches && el.matches('.el-tabs__item') && el.id && !isEphemeralId(el.id);
     if (tabId) candidates.unshift({ kind: 'css', value: `#${CSS.escape(el.id)}` });

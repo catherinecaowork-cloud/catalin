@@ -21,6 +21,12 @@ class SiteCreate(BaseModel):
     probe_error_url_patterns: list[str] = []
 
 
+class SiteUpdate(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    env: str | None = None
+
+
 class SiteOut(BaseModel):
     id: str
     name: str
@@ -76,6 +82,7 @@ class FlowOut(BaseModel):
     auth_type: str
     has_baseline: bool
     setup_flow_id: str | None = None
+    setup_flow_ids: list[str] = []
     imported_from: str | None = None
     page_widget_model: dict[str, Any] | None = None
 
@@ -90,6 +97,7 @@ class PageWidgetModelOut(BaseModel):
 
 class FlowSetupUpdate(BaseModel):
     setup_flow_id: str | None = None
+    setup_flow_ids: list[str] | None = None
 
 
 class FlowImportIn(BaseModel):

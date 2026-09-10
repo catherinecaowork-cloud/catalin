@@ -1,4 +1,5 @@
-import { KeyRound, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, KeyRound, PenLine, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { RecordStep } from "../../types";
 import {
@@ -7,7 +8,7 @@ import {
   resolveRecordInput,
   resolveRecordObject,
 } from "../../utils/runStepDisplay";
-import { Button, Checkbox, Input, Select } from "../ui";
+import { Button, Input, Select } from "../ui";
 import { PHASE_OPTIONS } from "./constants";
 
 export type DraftStepPatch = Partial<
@@ -18,8 +19,18 @@ type Props = {
   steps: RecordStep[];
   onUpdate: (index: number, patch: DraftStepPatch) => void;
   onDelete: (index: number) => void;
+  onMoveUp: (index: number) => void;
+  onMoveDown: (index: number) => void;
+  onAdd: (action: string, afterIndex?: number) => void;
   onMakeUniqueValue: (index: number) => void;
 };
+
+const ADD_ACTIONS = [
+  { value: "click", label: "Click" },
+  { value: "fill", label: "Set Text" },
+  { value: "choose", label: "Choose" },
+  { value: "assert", label: "Verify" },
+] as const;
 
 function templateClass(value: string | undefined) {
   return value && String(value).includes("{{") ? "tpl-var" : "";
@@ -31,9 +42,138 @@ function inputPatch(step: RecordStep, next: string): DraftStepPatch {
   return {};
 }
 
-export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: Props) {
+export function DraftStepGrid({
+  steps,
+  onUpdate,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+  onAdd,
+  onMakeUniqueValue,
+}: Props) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(
+    steps.length ? 0 : null,
+  );
+  const [addAction, setAddAction] = useState<string>("click");
+
+  useEffect(() => {
+    setSelectedIndex((current) => {
+      if (!steps.length) return null;
+      if (current === null) return 0;
+      return Math.min(current, steps.length - 1);
+    });
+  }, [steps.length]);
+
+  const selectedStep = useMemo(
+    () => (selectedIndex === null ? null : steps[selectedIndex] ?? null),
+    [selectedIndex, steps],
+  );
+
+  const canUnique =
+    selectedStep !== null &&
+    selectedStep.value !== undefined &&
+    selectedStep.action !== "goto";
+
+  const insertAfter = selectedIndex ?? undefined;
+
   return (
     <div className="step-grid-wrap draft-step-grid-wrap">
+      <div className="draft-step-console" role="toolbar" aria-label="步骤编辑">
+        <div className="draft-step-console-group">
+          <Select
+            className="draft-step-add-select"
+            value={addAction}
+            aria-label="新增步骤类型"
+            onChange={(event) => setAddAction(event.target.value)}
+          >
+            {ADD_ACTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+          <Button
+            variant="ghost"
+            className="draft-step-console-btn"
+            title="在选中步骤后新增"
+            onClick={() => onAdd(addAction, insertAfter)}
+          >
+            <Plus size={13} aria-hidden />
+            Add
+          </Button>
+        </div>
+        <span className="draft-step-console-sep" aria-hidden="true" />
+        <div className="draft-step-console-group">
+          <Button
+            variant="ghost"
+            className="draft-step-console-btn danger"
+            title="删除选中步骤"
+            disabled={selectedIndex === null}
+            onClick={() => {
+              if (selectedIndex === null) return;
+              onDelete(selectedIndex);
+            }}
+          >
+            <Trash2 size={13} aria-hidden />
+            Remove
+          </Button>
+          <Button
+            variant="ghost"
+            className="draft-step-console-btn"
+            title="上移"
+            disabled={selectedIndex === null || selectedIndex <= 0}
+            onClick={() => {
+              if (selectedIndex === null) return;
+              onMoveUp(selectedIndex);
+              setSelectedIndex(selectedIndex - 1);
+            }}
+          >
+            <ArrowUp size={13} aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            className="draft-step-console-btn"
+            title="下移"
+            disabled={selectedIndex === null || selectedIndex >= steps.length - 1}
+            onClick={() => {
+              if (selectedIndex === null) return;
+              onMoveDown(selectedIndex);
+              setSelectedIndex(selectedIndex + 1);
+            }}
+          >
+            <ArrowDown size={13} aria-hidden />
+          </Button>
+        </div>
+        <span className="draft-step-console-sep" aria-hidden="true" />
+        <div className="draft-step-console-group">
+          <Button
+            variant="ghost"
+            className={`draft-step-console-btn ${selectedStep?.mutating ? "active" : ""}`}
+            title="标记为写操作（会改被测数据）"
+            disabled={selectedIndex === null}
+            onClick={() => {
+              if (selectedIndex === null) return;
+              onUpdate(selectedIndex, { mutating: !selectedStep?.mutating });
+            }}
+          >
+            <PenLine size={13} aria-hidden />
+            写
+          </Button>
+          <Button
+            variant="ghost"
+            className="draft-step-console-btn"
+            title="Input 改为唯一值模板"
+            disabled={!canUnique || selectedIndex === null}
+            onClick={() => {
+              if (selectedIndex === null) return;
+              onMakeUniqueValue(selectedIndex);
+            }}
+          >
+            <KeyRound size={13} aria-hidden />
+          </Button>
+        </div>
+      </div>
+
       <table className="step-grid draft-step-grid">
         <thead>
           <tr>
@@ -43,7 +183,6 @@ export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: 
             <th className="col-input">Input</th>
             <th className="col-desc">Description</th>
             <th className="col-phase">分组</th>
-            <th className="col-ops">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -51,19 +190,22 @@ export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: 
             const objectText = resolveRecordObject(step);
             const inputText = resolveRecordInput(step);
             const inputEditable = recordInputEditable(step);
-            const canUnique =
-              step.value !== undefined && step.action !== "goto";
+            const selected = selectedIndex === index;
 
             return (
-              <tr key={step.id} className="step-grid-row draft-step-grid-row">
+              <tr
+                key={step.id}
+                className={`step-grid-row draft-step-grid-row ${selected ? "selected" : ""}`}
+                onClick={() => setSelectedIndex(index)}
+              >
                 <td className="col-idx">{index + 1}</td>
                 <td className="col-item mono" title={step.action}>
-                  {actionDisplay(step.action)}
+                  {index + 1} - {actionDisplay(step.action)}
                 </td>
                 <td className="col-object mono" title={objectText}>
                   {objectText}
                 </td>
-                <td className="col-input">
+                <td className="col-input" onClick={(event) => event.stopPropagation()}>
                   {inputEditable ? (
                     <Input
                       type="text"
@@ -78,7 +220,7 @@ export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: 
                     <span className="cell-muted">—</span>
                   )}
                 </td>
-                <td className="col-desc">
+                <td className="col-desc" onClick={(event) => event.stopPropagation()}>
                   <Input
                     type="text"
                     className="cell-input"
@@ -86,7 +228,7 @@ export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: 
                     onChange={(event) => onUpdate(index, { label: event.target.value })}
                   />
                 </td>
-                <td className="col-phase">
+                <td className="col-phase" onClick={(event) => event.stopPropagation()}>
                   <Select
                     className="cell-select"
                     value={step.phase ?? ""}
@@ -100,36 +242,6 @@ export function DraftStepGrid({ steps, onUpdate, onDelete, onMakeUniqueValue }: 
                       </option>
                     ))}
                   </Select>
-                </td>
-                <td className="col-ops">
-                  <div className="draft-step-ops">
-                    <Checkbox
-                      className="check compact"
-                      label="写"
-                      checked={!!step.mutating}
-                      onChange={(event) =>
-                        onUpdate(index, { mutating: event.target.checked })
-                      }
-                    />
-                    {canUnique ? (
-                      <Button
-                        variant="inline"
-                        className="icon-btn"
-                        title="唯一值"
-                        onClick={() => onMakeUniqueValue(index)}
-                      >
-                        <KeyRound size={13} aria-hidden />
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="inline"
-                      className="icon-btn danger"
-                      title="删除"
-                      onClick={() => onDelete(index)}
-                    >
-                      <Trash2 size={13} aria-hidden />
-                    </Button>
-                  </div>
                 </td>
               </tr>
             );

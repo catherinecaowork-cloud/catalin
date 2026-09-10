@@ -1,17 +1,19 @@
 import type { ReactNode } from "react";
 
+import { cn } from "../ui";
+
 type Props = {
-  activity: ReactNode;
   sidebar: ReactNode;
   editor: ReactNode;
+  rightPanel?: ReactNode;
 };
 
-export function Workbench({ activity, sidebar, editor }: Props) {
+export function Workbench({ sidebar, editor, rightPanel }: Props) {
   return (
-    <div className="workbench">
-      {activity}
+    <div className={cn("workbench", rightPanel ? "has-right-panel" : undefined)}>
       {sidebar}
-      {editor}
+      <div className="workbench-main">{editor}</div>
+      {rightPanel}
     </div>
   );
 }

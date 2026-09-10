@@ -85,16 +85,31 @@ export function useSites() {
   }, []);
 
   const createSite = useCallback(
-    async (name: string, baseUrl: string) => {
+    async (name: string, baseUrl: string, env = "test") => {
       const created = await api<Site>("/api/v1/sites", {
         method: "POST",
-        body: JSON.stringify({ name, base_url: baseUrl, env: "test", adapter: "generic" }),
+        body: JSON.stringify({ name, base_url: baseUrl, env, adapter: "generic" }),
       });
       await refresh();
       setSelectedSiteId(created.id);
       return created;
     },
     [refresh, setSelectedSiteId],
+  );
+
+  const updateSite = useCallback(
+    async (
+      siteId: string,
+      patch: { name?: string; base_url?: string; env?: string },
+    ) => {
+      const updated = await api<Site>(`/api/v1/sites/${siteId}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      await refresh();
+      return updated;
+    },
+    [refresh],
   );
 
   const deleteSite = useCallback(
@@ -173,6 +188,7 @@ export function useSites() {
     credsLoading,
     refreshCredentials,
     createSite,
+    updateSite,
     deleteSite,
     deleteCredential,
     saveFormLogin,

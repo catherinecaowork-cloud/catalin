@@ -10,7 +10,7 @@ import {
 
 import { api } from "../api/client";
 import type { Batch, Flow, Site, Suite } from "../types";
-import { isConfirmedFlow } from "../utils/flow";
+import { flowSetupNames, isConfirmedFlow } from "../utils/flow";
 
 type RunContextValue = {
   siteId: string | null;
@@ -32,7 +32,7 @@ type RunContextValue = {
   refresh: () => Promise<void>;
   saveSuite: (name: string) => Promise<void>;
   deleteSuite: (suiteId: string) => Promise<void>;
-  updateSetup: (flowId: string, setupFlowId: string | null) => Promise<void>;
+  updateSetup: (flowId: string, setupFlowIds: string[]) => Promise<void>;
   promoteFlow: (flow: Flow) => Promise<void>;
   deleteFlow: (flow: Flow) => Promise<void>;
   importFlows: (flowIds: string[]) => Promise<{ imported: string[]; skipped: string[] }>;
@@ -165,19 +165,19 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
   );
 
   const updateSetup = useCallback(
-    async (flowId: string, setupFlowId: string | null) => {
+    async (flowId: string, setupFlowIds: string[]) => {
       const updated = await api<Flow>(`/api/v1/flows/${flowId}/setup`, {
         method: "POST",
-        body: JSON.stringify({ setup_flow_id: setupFlowId }),
+        body: JSON.stringify({ setup_flow_ids: setupFlowIds }),
       });
       setFlows((prev) => prev.map((flow) => (flow.id === updated.id ? updated : flow)));
       const flow = flows.find((item) => item.id === flowId);
-      const setup = setupFlowId
-        ? flows.find((item) => item.id === setupFlowId)
-        : null;
+      const names = setupFlowIds
+        .map((id) => flows.find((item) => item.id === id)?.name ?? id)
+        .filter(Boolean);
       onLog(
-        setup && flow
-          ? `「${flow.name}」前置为「${setup.name}」`
+        flow && names.length
+          ? `「${flow.name}」前置：${names.join(" → ")}`
           : flow
             ? `「${flow.name}」已去掉前置`
             : "前置已更新",
@@ -230,9 +230,7 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
   const startSingleRun = useCallback(async () => {
     if (!selectedFlowId) throw new Error("先在列表里点选一条流程");
     const flow = flows.find((item) => item.id === selectedFlowId);
-    const setup = flow?.setup_flow_id
-      ? flows.find((item) => item.id === flow.setup_flow_id)
-      : null;
+    const setupNames = flow ? flowSetupNames(flow, flows) : [];
     const run = await api<{ id: string }>("/api/v1/runs", {
       method: "POST",
       body: JSON.stringify({
@@ -243,8 +241,8 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
       }),
     });
     onLog(
-      setup && flow
-        ? `已入队「${setup.name} → ${flow.name}」（同一次登录）`
+      setupNames.length && flow
+        ? `已入队「${setupNames.join(" → ")} → ${flow.name}」（同一次登录）`
         : `已入队 ${run.id.slice(0, 8)}`,
     );
     return { runId: run.id, title: `运行 ${run.id.slice(0, 8)}` };

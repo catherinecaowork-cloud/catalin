@@ -1,57 +1,19 @@
 import { useState } from "react";
 
 import { useRecordContext } from "../../context/RecordContext";
-import { Alert, Button, Checkbox, Field, FootHint, Input, ModuleHint, Muted, Select } from "../ui";
+import { Alert, Button, Field, FootHint, Input, ModuleHint, Muted } from "../ui";
 
 export function RecordSidebar() {
   const ctx = useRecordContext();
 
-  if (ctx.stage === "idle") {
-    return (
-      <>
-        <ModuleHint>填写意图后开窗录制。结束后再 AI 编译或直接保存为草稿。</ModuleHint>
-        <Field label="录制意图">
-          <Input
-            type="text"
-            value={ctx.intent}
-            placeholder="例如：新增一条款式并确认保存成功"
-            onChange={(event) => ctx.setIntent(event.target.value)}
-          />
-        </Field>
-        <Field label="登录凭证">
-          <Select
-            value={ctx.credentialId}
-            onChange={(event) => ctx.setCredentialId(event.target.value)}
-          >
-            <option value="">不登录</option>
-            {ctx.credentials.map((cred) => (
-              <option key={cred.id} value={cred.id}>
-                {cred.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="起始路径">
-          <Input
-            type="text"
-            value={ctx.startPath}
-            placeholder="/"
-            onChange={(event) => ctx.setStartPath(event.target.value)}
-          />
-        </Field>
-        <Checkbox
-          label="结束录制后 AI 编译验证"
-          checked={ctx.aiCompileEnabled}
-          onChange={(event) => ctx.setAiCompileEnabled(event.target.checked)}
-        />
-      </>
-    );
-  }
-
   if (ctx.stage === "busy") {
     return (
       <>
-        <ModuleHint>录制进行中。在浏览器里操作，完成后点「结束录制」。</ModuleHint>
+        <ModuleHint>
+          {ctx.recordPaused
+            ? "录制已暂停。调整页面后点「继续录制」，或点「结束录制」收工。"
+            : "录制进行中。在浏览器里操作，可暂停或结束录制。"}
+        </ModuleHint>
         {ctx.observedEntries.length ? (
           <div className="observed-fields">
             <Muted>已认识 {ctx.observedEntries.length} 个字段/组件</Muted>
@@ -104,25 +66,21 @@ export function RecordSidebarFoot() {
   const ctx = useRecordContext();
   const [assertText, setAssertText] = useState("");
 
-  if (ctx.stage === "idle") {
-    return (
-      <div className="run-foot">
-        <Button variant="go" disabled={!ctx.intent.trim()} onClick={() => void ctx.startRecord()}>
-          开始录制
-        </Button>
-        <FootHint>需要 headed 执行器在线。</FootHint>
-      </div>
-    );
-  }
-
   if (ctx.stage === "busy") {
     return (
       <div className="run-foot">
         <Muted>{ctx.waitingHint}</Muted>
-        <Muted>已采集 {ctx.eventCount} 个事件</Muted>
-        <Button variant="warn" onClick={() => void ctx.stopRecord()}>
-          结束录制
-        </Button>
+        <Muted>
+          {ctx.recordPaused ? "已暂停 · " : ""}已采集 {ctx.eventCount} 个事件
+        </Muted>
+        <div className="run-foot-actions">
+          <Button variant="ghost" onClick={() => void ctx.toggleRecordPause()}>
+            {ctx.recordPaused ? "继续录制" : "暂停录制"}
+          </Button>
+          <Button variant="warn" onClick={() => void ctx.stopRecord()}>
+            结束录制
+          </Button>
+        </div>
       </div>
     );
   }

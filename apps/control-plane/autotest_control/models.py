@@ -65,6 +65,8 @@ class Flow(Base):
     credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # 可选前置：跑本条前先跑那条（同站点）。删除款式前先新建，就是这个。
     setup_flow_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # 多条前置，按顺序执行。非空时优先于 setup_flow_id。
+    setup_flow_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     # 从其他环境导入时记下源环境名，列表上区分「本环境录的」和「导进来的」。
     imported_from: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # 黄金跑固化的基线（截图与关键数据快照）
@@ -111,6 +113,7 @@ class Run(Base):
     # 控制台「结束录制」置位；执行器轮询到后收工。create_all 不会改旧表，
     # 启动时 db.init_db 会补这一列。
     stop_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    pause_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     batch_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 录制过程中合并的页面认识（保存流程时写入 flow.page_widget_model）

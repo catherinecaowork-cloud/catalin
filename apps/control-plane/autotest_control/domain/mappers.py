@@ -64,6 +64,7 @@ def flow_out(flow: Flow) -> FlowOut:
         auth_type=flow.auth_type,
         has_baseline=flow.baseline is not None,
         setup_flow_id=flow.setup_flow_id,
+        setup_flow_ids=list(getattr(flow, "setup_flow_ids", None) or []),
         imported_from=getattr(flow, "imported_from", None),
         page_widget_model=getattr(flow, "page_widget_model", None),
     )

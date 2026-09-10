@@ -6,9 +6,11 @@ import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import type { Flow } from "../../types";
 import { flowListSub, flowStatusText, isConfirmedFlow } from "../../utils/flow";
 import { ConfirmModal } from "../patterns/ConfirmModal";
+import { FlowExplorerContextMenu } from "../patterns/FlowExplorerContextMenu";
+import { FlowSetupModal } from "../patterns/FlowSetupModal";
 import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
 import { PromptModal } from "../patterns/PromptModal";
-import { Button, EmptyState, Field, FootHint, Select, Switch } from "../ui";
+import { Button, EmptyState, FootHint, Switch } from "../ui";
 import { DeleteFlowModal } from "./DeleteFlowModal";
 import { ImportFlowsModal } from "./ImportFlowsModal";
 
@@ -17,6 +19,10 @@ export function RunSidebar() {
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Flow | null>(null);
   const [filter, setFilter] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ flow: Flow; x: number; y: number } | null>(
+    null,
+  );
+  const [setupModalFlow, setSetupModalFlow] = useState<Flow | null>(null);
   const { ask, confirmProps } = useConfirmDialog();
 
   const nodes = useMemo((): ExplorerNode[] => {
@@ -41,6 +47,10 @@ export function RunSidebar() {
       onSelect: () => {
         ctx.setSelectedFlowId(flow.id);
         ctx.onLog(`选中流程 ${flow.name}`);
+      },
+      onContextMenu: (event) => {
+        ctx.setSelectedFlowId(flow.id);
+        setContextMenu({ flow, x: event.clientX, y: event.clientY });
       },
       onDelete: flow.status === "draft" ? () => setDeleteTarget(flow) : undefined,
       deleteTitle: "删除草稿",
@@ -139,6 +149,15 @@ export function RunSidebar() {
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />
       <DeleteFlowModal flow={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <ConfirmModal {...confirmProps} />
+      {contextMenu ? (
+        <FlowExplorerContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onConfigureSetup={() => setSetupModalFlow(contextMenu.flow)}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      <FlowSetupModal flow={setupModalFlow} onClose={() => setSetupModalFlow(null)} />
     </>
   );
 }
@@ -153,7 +172,6 @@ export function RunSidebarFoot({
   const ctx = useRunContext();
   const selectedFlow = ctx.flows.find((flow) => flow.id === ctx.selectedFlowId) ?? null;
   const pickedCount = ctx.pickedFlowIds().length;
-  const others = ctx.flows.filter((flow) => flow.id !== selectedFlow?.id);
   const [suitePromptOpen, setSuitePromptOpen] = useState(false);
   const { ask, confirmProps } = useConfirmDialog();
 
@@ -176,26 +194,7 @@ export function RunSidebarFoot({
 
   return (
     <div className="run-foot">
-      {selectedFlow ? (
-        <>
-          <Field label="前置脚本">
-            <Select
-              value={selectedFlow.setup_flow_id ?? ""}
-              onChange={(event) =>
-                void ctx.updateSetup(selectedFlow.id, event.target.value || null)
-              }
-            >
-              <option value="">无前置（单独跑）</option>
-              {others.map((flow) => (
-                <option key={flow.id} value={flow.id}>
-                  {flow.name} · {flowStatusText(flow.status)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <FootHint>有前置时先跑前置再跑本条，浏览器不关、只登录一次。套件同样。</FootHint>
-        </>
-      ) : null}
+      <FootHint>右键测试用例 →「前置流程配置」可多选前置脚本。</FootHint>
 
       <Switch
         label="开窗执行"

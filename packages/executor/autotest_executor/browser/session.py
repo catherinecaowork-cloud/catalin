@@ -55,6 +55,12 @@ class BrowserSession:
             raise RuntimeError("会话尚未启动")
         return self._context
 
+    @property
+    def playwright(self):
+        if self._playwright is None:
+            raise RuntimeError("会话尚未启动")
+        return self._playwright
+
     def start(self, cookies: list[dict[str, Any]] | None = None, extra_headers: dict[str, str] | None = None) -> None:
         options = self.job.options
         if not options.headless and not _has_desktop_session():
@@ -62,14 +68,35 @@ class BrowserSession:
 
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = sync_playwright().start()
+        if options.headless:
+            launch_args: list[str] = []
+        elif self.job.kind == "record":
+            try:
+                from autotest_executor.browser.window_dock import get_work_area
+
+                work = get_work_area()
+                launch_args = [
+                    f"--window-position={work['left']},{work['top']}",
+                    f"--window-size={work['width']},{work['height']}",
+                ]
+            except Exception:
+                launch_args = ["--window-position=0,0", "--window-size=1920,1040"]
+        else:
+            launch_args = ["--window-position=80,80", "--window-size=1440,900"]
         self._browser = self._playwright.chromium.launch(
             headless=options.headless,
-            args=[] if options.headless else ["--window-position=80,80", "--window-size=1440,900"],
+            args=launch_args,
         )
 
-        context_kwargs: dict[str, Any] = {
-            "viewport": {"width": options.viewport_width, "height": options.viewport_height},
-        }
+        context_kwargs: dict[str, Any] = {}
+        # 开窗录制：禁用固定 viewport，页面随 Chromium 窗口实际大小渲染
+        if not options.headless and self.job.kind == "record":
+            context_kwargs["no_viewport"] = True
+        else:
+            context_kwargs["viewport"] = {
+                "width": options.viewport_width,
+                "height": options.viewport_height,
+            }
         if options.video != "off":
             context_kwargs["record_video_dir"] = str(self.artifacts_dir / "video")
         self._context = self._browser.new_context(**context_kwargs)

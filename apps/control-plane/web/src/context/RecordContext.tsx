@@ -14,6 +14,7 @@ import type {
   Compilation,
   Credential,
   PageWidgetEntry,
+  RecordLiveAction,
   RecordStep,
   RecordingSummary,
   Worker,
@@ -35,7 +36,10 @@ type RecordContextValue = {
   aiCompileEnabled: boolean;
   setAiCompileEnabled: (value: boolean) => void;
   credentials: Credential[];
+  recordUrl: string;
   eventCount: number;
+  recordPaused: boolean;
+  liveActions: RecordLiveAction[];
   observedEntries: PageWidgetEntry[];
   scriptSource: ScriptSource;
   sampleSteps: RecordStep[];
@@ -51,8 +55,17 @@ type RecordContextValue = {
   compileError: boolean;
   notes: string[];
   saveHint: string;
-  startRecord: () => Promise<void>;
+  startRecord: (options?: {
+    siteId?: string;
+    startPath?: string;
+    recordUrl?: string;
+    intent?: string;
+    credentialId?: string | null;
+  }) => Promise<void>;
   stopRecord: () => Promise<void>;
+  pauseRecord: () => Promise<void>;
+  resumeRecord: () => Promise<void>;
+  toggleRecordPause: () => Promise<void>;
   retryCompile: () => Promise<void>;
   retryPolishCompile: () => Promise<void>;
   switchScriptSource: (source: ScriptSource) => void;
@@ -61,6 +74,9 @@ type RecordContextValue = {
   cancelRecord: () => void;
   updateStep: (index: number, patch: Partial<RecordStep>) => void;
   deleteStep: (index: number) => void;
+  moveStepUp: (index: number) => void;
+  moveStepDown: (index: number) => void;
+  addDraftStep: (action?: string, afterIndex?: number) => void;
   setStepUniqueValue: (index: number) => void;
   addAssert: (expected: string) => void;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
@@ -108,7 +124,10 @@ export function RecordProvider({
     () => localStorage.getItem(AI_COMPILE_KEY) === "1",
   );
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [recordUrl, setRecordUrl] = useState("");
   const [eventCount, setEventCount] = useState(0);
+  const [recordPaused, setRecordPaused] = useState(false);
+  const [liveActions, setLiveActions] = useState<RecordLiveAction[]>([]);
   const [observedEntries, setObservedEntries] = useState<PageWidgetEntry[]>([]);
   const [scriptSource, setScriptSource] = useState<ScriptSource>("observer");
   const [sampleSteps, setSampleSteps] = useState<RecordStep[]>([]);
@@ -293,11 +312,15 @@ export function RecordProvider({
         const state = await api<{
           status: string;
           summary: RecordingSummary;
+          paused?: boolean;
           event_count: number;
+          live_actions?: RecordLiveAction[];
           observation_model?: { entries?: PageWidgetEntry[] };
           recognized_count?: number;
         }>(`/api/v1/recordings/${runId}`);
         setEventCount(state.event_count ?? 0);
+        setRecordPaused(!!state.paused);
+        setLiveActions(Array.isArray(state.live_actions) ? state.live_actions : []);
         setObservedEntries(state.observation_model?.entries ?? []);
         updateWaitingHint(state.status);
         if (state.status === "passed") {
@@ -315,19 +338,33 @@ export function RecordProvider({
     [beginCompile, onLog, updateWaitingHint],
   );
 
-  const startRecord = useCallback(async () => {
-    if (!siteId) {
-      onLog("先在顶栏选择站点", "error");
-      return;
+  const startRecord = useCallback(async (options?: {
+    siteId?: string;
+    startPath?: string;
+    recordUrl?: string;
+    intent?: string;
+    credentialId?: string | null;
+  }) => {
+    const effectiveSiteId = options?.siteId ?? siteId;
+    const effectiveStartPath = (options?.startPath ?? startPath).trim() || "/";
+    const effectiveCredentialId = options?.credentialId ?? credentialId;
+    const trimmed = (options?.intent ?? intent).trim() || "Web 录制";
+    if (!effectiveSiteId) {
+      onLog("请先在高级选项中选择工作站点", "error");
+      throw new Error("未选择工作站点");
     }
-    const trimmed = intent.trim();
-    if (!trimmed) {
-      onLog("请先填写录制意图", "error");
-      return;
-    }
+    setIntent(trimmed);
+    setStartPath(effectiveStartPath);
+    setCredentialId(effectiveCredentialId || "");
     const token = ++pollTokenRef.current;
     setStage("busy");
+    setRecordUrl(
+      options?.recordUrl?.trim() ||
+        (/^https?:\/\//i.test(effectiveStartPath) ? effectiveStartPath : effectiveStartPath),
+    );
     setEventCount(0);
+    setRecordPaused(false);
+    setLiveActions([]);
     setObservedEntries([]);
     updateWaitingHint("queued");
     onLog("开始录制");
@@ -335,18 +372,20 @@ export function RecordProvider({
       const started = await api<{ run_id: string }>("/api/v1/recordings", {
         method: "POST",
         body: JSON.stringify({
-          site_id: siteId,
-          credential_id: credentialId || null,
-          start_path: startPath.trim(),
+          site_id: effectiveSiteId,
+          credential_id: effectiveCredentialId || null,
+          start_path: effectiveStartPath,
           intent: trimmed,
         }),
       });
       setRecordRunId(started.run_id);
       onOpenRecordTab(started.run_id, "录制中");
-      await pollRecording(started.run_id, token);
+      void pollRecording(started.run_id, token);
     } catch (err) {
       setStage("idle");
-      onLog(err instanceof Error ? err.message : String(err), "error");
+      const message = err instanceof Error ? err.message : String(err);
+      onLog(message, "error");
+      throw err instanceof Error ? err : new Error(message);
     }
   }, [
     siteId,
@@ -367,10 +406,41 @@ export function RecordProvider({
     onLog("正在结束录制…");
     try {
       await api(`/api/v1/recordings/${recordRunId}/stop`, { method: "POST" });
+      setRecordPaused(false);
     } catch (err) {
       onLog(err instanceof Error ? err.message : String(err), "error");
     }
   }, [recordRunId, onLog]);
+
+  const pauseRecord = useCallback(async () => {
+    if (!recordRunId) return;
+    try {
+      await api(`/api/v1/recordings/${recordRunId}/pause`, { method: "POST" });
+      setRecordPaused(true);
+      onLog("录制已暂停");
+    } catch (err) {
+      onLog(err instanceof Error ? err.message : String(err), "error");
+    }
+  }, [recordRunId, onLog]);
+
+  const resumeRecord = useCallback(async () => {
+    if (!recordRunId) return;
+    try {
+      await api(`/api/v1/recordings/${recordRunId}/resume`, { method: "POST" });
+      setRecordPaused(false);
+      onLog("录制已继续");
+    } catch (err) {
+      onLog(err instanceof Error ? err.message : String(err), "error");
+    }
+  }, [recordRunId, onLog]);
+
+  const toggleRecordPause = useCallback(async () => {
+    if (recordPaused) {
+      await resumeRecord();
+      return;
+    }
+    await pauseRecord();
+  }, [pauseRecord, recordPaused, resumeRecord]);
 
   const retryCompileWithMode = useCallback(
     async (compileMode: "observer" | "polish" | null) => {
@@ -457,6 +527,82 @@ export function RecordProvider({
     [markDirty],
   );
 
+  const moveStep = useCallback(
+    (index: number, delta: number) => {
+      setDraftSteps((prev) => {
+        const nextIndex = index + delta;
+        if (index < 0 || index >= prev.length || nextIndex < 0 || nextIndex >= prev.length) {
+          return prev;
+        }
+        const copy = [...prev];
+        [copy[index], copy[nextIndex]] = [copy[nextIndex], copy[index]];
+        return copy;
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const moveStepUp = useCallback((index: number) => moveStep(index, -1), [moveStep]);
+  const moveStepDown = useCallback((index: number) => moveStep(index, 1), [moveStep]);
+
+  const addDraftStep = useCallback(
+    (action = "click", afterIndex?: number) => {
+      const id = `manual_${Date.now()}`;
+      let step: RecordStep;
+      switch (action) {
+        case "fill":
+          step = {
+            id,
+            action: "fill",
+            label: "填写字段",
+            value: "",
+            target: { candidates: [{ kind: "field", value: "" }] },
+            mutating: true,
+          };
+          break;
+        case "choose":
+          step = {
+            id,
+            action: "choose",
+            label: "选择选项",
+            value: "",
+            target: { candidates: [{ kind: "field", value: "" }] },
+            mutating: false,
+          };
+          break;
+        case "assert":
+          step = {
+            id,
+            action: "assert",
+            assert_kind: "text_contains",
+            expected: "",
+            label: "断言文本出现",
+          };
+          break;
+        default:
+          step = {
+            id,
+            action: "click",
+            label: "点击元素",
+            target: { candidates: [{ kind: "text", value: "" }] },
+            mutating: false,
+          };
+      }
+      setDraftSteps((prev) => {
+        const insertAt =
+          afterIndex !== undefined && afterIndex >= 0
+            ? Math.min(afterIndex + 1, prev.length)
+            : prev.length;
+        const copy = [...prev];
+        copy.splice(insertAt, 0, step);
+        return copy;
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
   const setStepUniqueValue = useCallback(
     (index: number) => {
       setDraftSteps((prev) =>
@@ -500,6 +646,10 @@ export function RecordProvider({
     setCompileMessage("");
     setNotes([]);
     setSaveHint("");
+    setRecordUrl("");
+    setEventCount(0);
+    setRecordPaused(false);
+    setLiveActions([]);
     setObservedEntries([]);
     setSampleSteps([]);
     setObserverSteps([]);
@@ -574,7 +724,10 @@ export function RecordProvider({
       aiCompileEnabled,
       setAiCompileEnabled,
       credentials,
+      recordUrl,
       eventCount,
+      recordPaused,
+      liveActions,
       observedEntries,
       scriptSource,
       sampleSteps,
@@ -592,6 +745,9 @@ export function RecordProvider({
       saveHint,
       startRecord,
       stopRecord,
+      pauseRecord,
+      resumeRecord,
+      toggleRecordPause,
       retryCompile,
       retryPolishCompile,
       switchScriptSource,
@@ -600,6 +756,9 @@ export function RecordProvider({
       cancelRecord: resetRecord,
       updateStep,
       deleteStep,
+      moveStepUp,
+      moveStepDown,
+      addDraftStep,
       setStepUniqueValue,
       addAssert,
       onLog,
@@ -613,7 +772,10 @@ export function RecordProvider({
       aiCompileEnabled,
       setAiCompileEnabled,
       credentials,
+      recordUrl,
       eventCount,
+      recordPaused,
+      liveActions,
       observedEntries,
       scriptSource,
       sampleSteps,
@@ -630,6 +792,9 @@ export function RecordProvider({
       saveHint,
       startRecord,
       stopRecord,
+      pauseRecord,
+      resumeRecord,
+      toggleRecordPause,
       retryCompile,
       retryPolishCompile,
       switchScriptSource,
@@ -638,6 +803,9 @@ export function RecordProvider({
       resetRecord,
       updateStep,
       deleteStep,
+      moveStepUp,
+      moveStepDown,
+      addDraftStep,
       setStepUniqueValue,
       addAssert,
       onLog,

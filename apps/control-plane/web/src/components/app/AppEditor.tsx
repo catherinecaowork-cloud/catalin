@@ -1,6 +1,6 @@
 import { Clock, Play } from "lucide-react";
 
-import type { EditorTab, ModuleKind, Worker } from "../../types";
+import type { EditorTab, Worker } from "../../types";
 import { MODULES } from "../../types";
 import { parseRecTabId, parseRunTabId } from "../../utils/tabs";
 import { ModuleToolbar, ModuleToolbarGroup, ModuleToolbarLabel } from "../patterns/ModuleToolbar";
@@ -22,7 +22,9 @@ type Props = {
   logOpen: boolean;
   onClearLog: () => void;
   onToggleLog: () => void;
-  onOpenModule: (kind: ModuleKind) => void;
+  onOpenRecord: () => void;
+  onOpenRunModule: () => void;
+  onOpenHistory: () => void;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onFollowBatch: (runId: string, title: string) => void;
   onRunEnd?: () => void;
@@ -89,14 +91,22 @@ export function AppEditor({
   logOpen,
   onClearLog,
   onToggleLog,
-  onOpenModule,
+  onOpenRecord,
+  onOpenRunModule,
+  onOpenHistory,
   onLog,
   onFollowBatch,
   onRunEnd,
 }: Props) {
   const body = (() => {
     if (!activeTab) {
-      return <StartPage onOpenModule={onOpenModule} />;
+      return (
+        <StartPage
+          onOpenRecord={onOpenRecord}
+          onOpenRun={onOpenRunModule}
+          onOpenHistory={onOpenHistory}
+        />
+      );
     }
 
     const runId = activeRunId ?? parseRunTabId(activeTab.id);

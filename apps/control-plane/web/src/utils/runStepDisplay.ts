@@ -5,6 +5,7 @@ const ACTION_LABELS: Record<string, string> = {
   fill: "Set Text",
   goto: "Navigate",
   choose: "Choose",
+  press: "Press Key",
   select: "Select",
   upload: "Upload",
   assert: "Verify",
@@ -49,15 +50,90 @@ export function resolveStepInput(step: RunStep): string {
   return "—";
 }
 
+type RecordCandidate = { kind?: string; value?: string; name?: string | null };
+
+const NOISE_OBJECT_TEXT = new Set([
+  "请选择",
+  "请输入",
+  "请填写",
+  "下拉",
+  "搜索",
+  "添加",
+  "元素",
+  "输入框",
+  "—",
+  "-",
+  "–",
+  "一",
+]);
+
+function isNoiseObjectText(value: string): boolean {
+  const text = value.trim();
+  if (!text) return true;
+  if (NOISE_OBJECT_TEXT.has(text)) return true;
+  return /^(请输入|请选择|请填写)/.test(text);
+}
+
+function recordCandidateRank(candidate: RecordCandidate): number {
+  switch (candidate.kind) {
+    case "field":
+    case "matrix":
+      return 0;
+    case "testid":
+      return 1;
+    case "label":
+      return 2;
+    case "css":
+      return 3;
+    case "role":
+      return String(candidate.name ?? "").trim() ? 4 : 8;
+    case "placeholder":
+      return 5;
+    case "text":
+      return 6;
+    default:
+      return 7;
+  }
+}
+
+function formatRecordCandidate(candidate: RecordCandidate): string {
+  const value = String(candidate.value ?? "").trim();
+  const name = String(candidate.name ?? "").trim();
+  if (candidate.kind === "role" && name) {
+    return `${value}_${name}`.replace(/\s+/g, "_");
+  }
+  return value;
+}
+
+export function pickBestRecordCandidate(
+  target?: {
+    candidates?: RecordCandidate[];
+    trigger_css?: string;
+  } | null,
+): string | null {
+  if (!target) return null;
+  const triggerCss = String(target.trigger_css ?? "").trim();
+  if (triggerCss) return triggerCss;
+
+  const ranked = [...(target.candidates ?? [])]
+    .filter((item) => item.value && !isNoiseObjectText(String(item.value)))
+    .sort(
+      (left, right) =>
+        recordCandidateRank(left) - recordCandidateRank(right) ||
+        String(left.value).length - String(right.value).length,
+    );
+
+  if (ranked.length) return formatRecordCandidate(ranked[0]);
+  return null;
+}
+
 export function resolveRecordObject(step: RecordStep): string {
   const target = step.target as
-    | { candidates?: Array<{ kind?: string; value?: string }> }
+    | { candidates?: RecordCandidate[]; trigger_css?: string }
     | undefined;
-  const candidates = target?.candidates;
-  if (candidates?.length) {
-    const primary = candidates.find((item) => item.value) ?? candidates[0];
-    if (primary?.value) return String(primary.value);
-  }
+  const picked = pickBestRecordCandidate(target);
+  if (picked) return picked;
+
   const label = step.label ?? "";
   const cn = label.match(/「([^」]+)」/);
   if (cn) return cn[1];

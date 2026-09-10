@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,11 @@ from autotest_executor.auth import (
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
 from autotest_executor.browser.readiness import wait_for_app_ready
 from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
+from autotest_executor.browser.window_dock import (
+    RecorderDock,
+    apply_main_only_layout,
+    open_recorder_dock,
+)
 from autotest_executor.client import ControlPlaneClient
 from autotest_executor.compiler import compile_events
 from autotest_executor.observer_collect import (
@@ -27,7 +33,7 @@ from autotest_executor.observer_collect import (
     sanitize_observation_payload,
     snapshot_dedupe_key,
 )
-from autotest_protocol import Job, RecordingSummary, Step, new_event, new_observe_snapshot_event
+from autotest_protocol import Job, RecordingSummary, Step, new_event, new_observe_snapshot_event, new_record_action_event
 
 _BROWSER_DIR = Path(__file__).resolve().parent / "browser"
 _LOCATOR_JS = (_BROWSER_DIR / "locator_candidates.js").read_text(encoding="utf-8")
@@ -43,6 +49,8 @@ _MAX_PAGE_TEXT_BYTES = 8 * 1024
 _MAX_SEMANTIC_STEPS = 100
 _MAX_SEMANTIC_BYTES = 32 * 1024
 _REDACTED = "[REDACTED]"
+_LIVE_ACTION_TYPES = frozenset({"click", "fill", "choose", "select", "upload", "press"})
+_LIVE_NOISE_TYPES = frozenset({"scroll", "unsupported"})
 _SENSITIVE_KEY_PARTS = (
     "password",
     "passwd",
@@ -171,11 +179,16 @@ class RecordExecutor:
         self.events: list[dict[str, Any]] = []
         self.response_summaries: list[dict[str, Any]] = []
         self._stopped = False
+        self._paused = False
         self.start_url = job.site.base_url
         self._record_origin: tuple[str, str, int | None] | None = None
         self._snapshot_seq = 0
         self._snapshot_keys: set[str] = set()
         self._snapshot_count = 0
+        self._panel_dock: RecorderDock | None = None
+        self._action_post_warned = False
+        self._live_preview_steps: list[dict[str, Any]] = []
+        self._live_preview_event_count = -1
 
     def execute(self) -> str:
         started = time.monotonic()
@@ -192,6 +205,7 @@ class RecordExecutor:
             material = self._resolve_auth()
             # 录制必须开窗：人要看见并操作。没有桌面会话就明确失败。
             self.session.start(cookies=material.cookies, extra_headers=material.headers)
+            apply_main_only_layout(self.session.page)
 
             runner = ActionRunner(self.session)
             if material.form is not None:
@@ -204,8 +218,17 @@ class RecordExecutor:
             # 无论有没有登录，都必须离开 about:blank。
             # 输入框里的「/」只是 placeholder，没填就等于空路径，以前会一直停在空白页。
             self._goto_start()
+            apply_main_only_layout(self.session.page)
             self._arm_response_capture()
             self._arm_recorder()
+            self._panel_dock = open_recorder_dock(
+                self.session.playwright,
+                self.session.page,
+                self.client.server,
+                self.job.run_id,
+                self.start_url,
+                self.job.record_intent or "",
+            )
             self._wait_until_stop()
             summary = self._compile_and_capture()
         except HeadedNotSupported as exc:
@@ -221,6 +244,12 @@ class RecordExecutor:
             status = "error"
             summary = {"error": f"{type(exc).__name__}: {exc}"}
 
+        if self._panel_dock is not None:
+            try:
+                self._panel_dock.close()
+            except Exception:
+                pass
+            self._panel_dock = None
         try:
             self.session.stop(keep_trace=False)
         except Exception:
@@ -322,6 +351,115 @@ class RecordExecutor:
         self.session.page.evaluate(_OBSERVER_SNAPSHOT_JS)
         self.session.page.evaluate(_RECORDER_JS)
 
+    def _is_live_action(self, event: dict[str, Any]) -> bool:
+        event_type = str(event.get("type") or "")
+        if event_type in _LIVE_NOISE_TYPES:
+            return False
+        if event_type in _LIVE_ACTION_TYPES:
+            return True
+        # 未知类型也展示，便于排查；仅过滤滚动/不支持类噪音
+        return bool(event_type)
+
+    def _live_action_summaries(self) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for event in self.events:
+            if not isinstance(event, dict) or not self._is_live_action(event):
+                continue
+            summaries.append(self._summarize_action_event(event, index=len(summaries) + 1))
+        return summaries
+
+    def _compiled_live_steps(self) -> list[dict[str, Any]]:
+        """与结束确认页同一套 compile 规则，保证右侧 dock 与最终步骤一致。"""
+        count = len(self.events)
+        if count == self._live_preview_event_count:
+            return self._live_preview_steps
+        if not self.events:
+            self._live_preview_event_count = count
+            self._live_preview_steps = []
+            return self._live_preview_steps
+        steps, _ = compile_events(
+            self.events, self.start_url, intent=self.job.record_intent or ""
+        )
+        self._live_preview_event_count = count
+        self._live_preview_steps = steps[1:] if len(steps) > 1 else []
+        return self._live_preview_steps
+
+    def _push_live_progress(self) -> None:
+        self._emit(
+            "record.progress",
+            event_count=len(self.events),
+            paused=self._paused,
+            live_actions=self._live_action_summaries()[-100:],
+            live_steps=self._compiled_live_steps()[-100:],
+            debug_types=[str(event.get("type") or "") for event in self.events[-12:]],
+        )
+
+    def _set_recorder_paused(self, paused: bool) -> None:
+        if paused == self._paused:
+            return
+        self._paused = paused
+        try:
+            self.session.page.evaluate(
+                "(value) => window.__atpRecorder && window.__atpRecorder.setPaused(!!value)",
+                paused,
+            )
+        except Exception:
+            pass
+        self._emit(
+            "log",
+            level="info",
+            message="录制已暂停，页面操作不会被记录" if paused else "录制已继续",
+        )
+        self._push_live_progress()
+
+    def _post_record_action(self, payload: dict[str, Any]) -> None:
+        summary = self._summarize_action_event(payload)
+
+        def send() -> None:
+            try:
+                self.client.post_events(
+                    self.job.run_id,
+                    [new_record_action_event(**summary)],
+                )
+            except Exception as exc:
+                if not self._action_post_warned:
+                    self._action_post_warned = True
+                    self._emit(
+                        "log",
+                        level="warn",
+                        message=f"实时动作上报失败，将改用心跳同步：{exc}",
+                    )
+
+        threading.Thread(target=send, daemon=True).start()
+
+    def _summarize_action_event(self, payload: dict[str, Any], index: int | None = None) -> dict[str, Any]:
+        target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+        candidates = target.get("candidates") if isinstance(target.get("candidates"), list) else []
+        slim_candidates: list[dict[str, str]] = []
+        for candidate in candidates[:4]:
+            if not isinstance(candidate, dict):
+                continue
+            slim_candidates.append(
+                {
+                    "kind": _bounded_text(candidate.get("kind"), 32),
+                    "value": _bounded_text(candidate.get("value"), 256),
+                }
+            )
+        value = payload.get("value")
+        return {
+            "index": index if index is not None else len(self.events),
+            "type": _bounded_text(payload.get("type"), 32),
+            "url": _safe_url(str(payload.get("url") or "")),
+            "text": _bounded_text(payload.get("text"), 256),
+            "value": _bounded_text(value, 256) if value is not None else None,
+            "label": _bounded_text(context.get("label"), 128),
+            "dialog": _bounded_text(context.get("dialog"), 128),
+            "scope": _bounded_text(scope.get("name"), 128),
+            "candidates": slim_candidates,
+        }
+
     def _on_emit(self, _source: Any, payload: Any) -> None:
         if not isinstance(payload, dict):
             return
@@ -332,6 +470,9 @@ class RecordExecutor:
             self._ingest_observation_snapshot(payload)
             return
         self.events.append(payload)
+        if isinstance(payload, dict) and self._is_live_action(payload):
+            self._post_record_action(payload)
+        self._push_live_progress()
 
     def _ingest_observation_snapshot(self, payload: dict[str, Any]) -> None:
         if self._snapshot_count >= _MAX_SNAPSHOTS:
@@ -370,6 +511,7 @@ class RecordExecutor:
     def _wait_until_stop(self) -> None:
         deadline = time.monotonic() + _MAX_SECONDS
         last_pulse = 0.0
+        last_dock = 0.0
         while not self._stopped:
             if time.monotonic() > deadline:
                 self._emit("log", level="info", message="录制满 30 分钟，自动结束")
@@ -381,6 +523,11 @@ class RecordExecutor:
             except Exception:
                 break
             page.wait_for_timeout(300)
+            control = self.client.recording_control(self.job.run_id)
+            if control.get("stop"):
+                self._stopped = True
+                break
+            self._set_recorder_paused(bool(control.get("pause")))
             try:
                 page.evaluate(
                     "(n) => window.__atpRecorder && window.__atpRecorder.setCount(n)",
@@ -389,12 +536,13 @@ class RecordExecutor:
             except Exception:
                 pass
             now = time.monotonic()
+            if self._panel_dock and now - last_dock >= 2:
+                last_dock = now
+                self._panel_dock.reposition_beside(self.session.page)
             if now - last_pulse >= 2:
                 last_pulse = now
                 # 兼做心跳：长时间不上报事件，租约会过期、任务被回收
-                self._emit("record.progress", event_count=len(self.events))
-                if self.client.should_stop(self.job.run_id):
-                    self._stopped = True
+                self._push_live_progress()
 
     def _compile_and_capture(self) -> dict[str, Any]:
         steps, notes = compile_events(

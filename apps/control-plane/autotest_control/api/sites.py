@@ -115,6 +115,7 @@ from autotest_control.schemas import (
     SiteCreate,
     SiteFormCredentialIn,
     SiteOut,
+    SiteUpdate,
     SuiteCreate,
     SuiteOut,
     SuiteUpdate,
@@ -177,6 +178,31 @@ def get_site_page_widget_models(
     get_site(session, scope, site_id)
     model = load_site_widget_models(session, scope, site_id)
     return PageWidgetModelOut.model_validate(model_to_dict(model))
+
+
+@router.patch("/sites/{site_id}", response_model=SiteOut)
+def update_site(
+    site_id: str,
+    payload: SiteUpdate,
+    scope: Scope = Depends(get_scope),
+    session: Session = Depends(get_session),
+) -> SiteOut:
+    site = get_site(session, scope, site_id)
+    if payload.name is not None:
+        site.name = payload.name.strip()
+    if payload.base_url is not None:
+        site.base_url = payload.base_url.rstrip("/")
+    if payload.env is not None:
+        site.env = payload.env
+    session.commit()
+    return SiteOut(
+        id=site.id,
+        name=site.name,
+        base_url=site.base_url,
+        env=site.env,
+        adapter=site.adapter,
+        probe_error_url_patterns=site.probe_error_url_patterns,
+    )
 
 
 @router.delete("/sites/{site_id}")

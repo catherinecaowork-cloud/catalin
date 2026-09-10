@@ -31,6 +31,8 @@ def _ensure_sqlite_columns() -> None:
         cols = {row[1] for row in conn.execute(text("PRAGMA table_info(run)")).fetchall()}
         if "stop_requested" not in cols:
             conn.execute(text("ALTER TABLE run ADD COLUMN stop_requested BOOLEAN DEFAULT 0"))
+        if "pause_requested" not in cols:
+            conn.execute(text("ALTER TABLE run ADD COLUMN pause_requested BOOLEAN DEFAULT 0"))
         if "batch_id" not in cols:
             conn.execute(text("ALTER TABLE run ADD COLUMN batch_id VARCHAR(36)"))
         if "batch_index" not in cols:
@@ -38,6 +40,8 @@ def _ensure_sqlite_columns() -> None:
         flow_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(flow)")).fetchall()}
         if "setup_flow_id" not in flow_cols:
             conn.execute(text("ALTER TABLE flow ADD COLUMN setup_flow_id VARCHAR(36)"))
+        if "setup_flow_ids" not in flow_cols:
+            conn.execute(text("ALTER TABLE flow ADD COLUMN setup_flow_ids JSON"))
         if "imported_from" not in flow_cols:
             conn.execute(text("ALTER TABLE flow ADD COLUMN imported_from VARCHAR(200)"))
         if "page_widget_model" not in flow_cols:

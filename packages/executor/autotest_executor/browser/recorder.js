@@ -8,10 +8,23 @@
 
   const BADGE_ID = '__atp_recorder_badge';
   const INPUT_SETTLE_MS = 600;
+  let paused = false;
 
   const inBadge = (el) => !!(el && el.closest && el.closest('#' + BADGE_ID));
 
+  const syncPauseBadge = () => {
+    if (window.__atpDockPanelActive) return;
+    const statusEl = document.getElementById(BADGE_ID + '_status');
+    const dot = document.querySelector(`#${BADGE_ID} span > span`);
+    if (statusEl) statusEl.textContent = paused ? '已暂停' : '正在录制';
+    if (dot) {
+      dot.style.background = paused ? '#f0ad4e' : '#e05252';
+      dot.style.animation = paused ? 'none' : '__atp_pulse 1s infinite';
+    }
+  };
+
   const emit = (payload) => {
+    if (paused && payload.type !== 'stop') return;
     if (!window.__atpEmit) return;
     try {
       window.__atpEmit({ ...payload, ts: Date.now(), url: location.href });
@@ -45,8 +58,13 @@
   const flushInput = () => {
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
     if (!pending) return;
-    const { el, target, context } = pending;
+    const { el, context } = pending;
+    let { target } = pending;
     pending = null;
+    if (!target) {
+      const label = (context && context.label) || el.getAttribute?.('placeholder') || el.name || 'input';
+      target = { candidates: [{ kind: 'field', value: String(label) }] };
+    }
     emit({ type: 'fill', target, context, value: el.value });
   };
 
@@ -186,7 +204,7 @@
   };
 
   const emitPlainClick = (el) => {
-    const text = (el.innerText || '').trim().slice(0, 40);
+    const text = (el.innerText || el.textContent || el.value || '').trim().slice(0, 40);
     const key = (el.tagName || '') + '|' + text;
     const now = Date.now();
     if (key === lastClickKey && now - lastClickTs < 800) return false;
@@ -202,8 +220,13 @@
           trigger_css: lastComboInfo.trigger_css,
         }
       : { context };
-    const target = decorateTarget(el, describe(el), extra);
-    if (!target) return false;
+    let target = decorateTarget(el, describe(el), extra);
+    if (!target) {
+      const label = (context && context.label) || text || el.getAttribute?.('placeholder') || el.tagName;
+      target = {
+        candidates: [{ kind: 'text', value: String(label || 'element') }],
+      };
+    }
     if (portal) rememberCombo(target, context);
     emit({
       type: 'click',
@@ -307,8 +330,9 @@
     const key = title;
     if (key === lastChooseKey && now - lastChooseTs < 800) return true;
     const host = (inDropdown(option) && lastComboTrigger) || comboHost(option) || lastComboTrigger || option;
-    const context = contextOf(host);
-    const target = decorateTarget(host, describe(host), { context });
+    const describeEl = (window.__atpComboDescribeEl && window.__atpComboDescribeEl(host)) || host;
+    const context = contextOf(describeEl);
+    const target = decorateTarget(host, describe(describeEl), { context });
     if (!target) return false;
     lastChooseKey = key;
     lastChooseTs = now;
@@ -410,18 +434,44 @@
   // 挂在冒泡上会漏掉一部分点击。
   const opts = { capture: true, passive: true };
 
-  document.addEventListener('input', (e) => {
-    const el = eventEl(e);
-    if (inBadge(el) || !el || !('value' in el)) return;
-    if (el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') return;
+  const isTextInput = (el) => {
+    if (!el || !el.tagName) return false;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag !== 'INPUT') return false;
+    const type = (el.type || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'file', 'button', 'submit', 'hidden'].includes(type);
+  };
+
+  const trackActiveInput = (el) => {
+    if (!isTextInput(el) || inBadge(el)) return;
     if (isComboSearch(el) || comboHost(el)) return;
     noteInput(el);
+  };
+
+  document.addEventListener('input', (e) => {
+    trackActiveInput(eventEl(e));
+  }, opts);
+
+  document.addEventListener('keyup', (e) => {
+    if (fromBadge(e)) return;
+    trackActiveInput(document.activeElement);
+  }, opts);
+
+  document.addEventListener('compositionend', (e) => {
+    trackActiveInput(eventEl(e) || document.activeElement);
   }, opts);
 
   document.addEventListener('change', (e) => {
     const el = eventEl(e);
     if (inBadge(el) || !el) return;
     if (isComboSearch(el) || (comboHost(el) && el.tagName !== 'SELECT')) return;
+    if (isTextInput(el)) {
+      flushInput();
+      noteInput(el);
+      flushInput();
+      return;
+    }
     if (el.tagName === 'SELECT') {
       flushInput();
       emit({
@@ -615,6 +665,7 @@
 
   // ---------------------------------------------------------------- 悬浮条
   const mountBadge = () => {
+    if (window.__atpDockPanelActive) return;
     if (!document.body || document.getElementById(BADGE_ID)) return;
     const badge = document.createElement('div');
     badge.id = BADGE_ID;
@@ -628,7 +679,7 @@
       <span style="display:flex;align-items:center;gap:6px">
         <span style="width:8px;height:8px;border-radius:50%;background:#e05252;
                      animation:__atp_pulse 1s infinite"></span>
-        正在录制 <b id="${BADGE_ID}_count">0</b> 步
+        <span id="${BADGE_ID}_status">正在录制</span> <b id="${BADGE_ID}_count">0</b> 步
       </span>
       <button id="${BADGE_ID}_stop" style="background:#4c8bf5;color:#fff;border:none;
               border-radius:5px;padding:5px 12px;font-weight:600;cursor:pointer">结束录制</button>`;
@@ -660,6 +711,16 @@
       const node = document.getElementById(BADGE_ID + '_count');
       if (node) node.textContent = String(n);
     },
+    setPaused: (value) => {
+      const next = !!value;
+      if (next && !paused) {
+        flushInput();
+        flushScroll();
+      }
+      paused = next;
+      syncPauseBadge();
+    },
+    isPaused: () => paused,
   };
 
   // ---------------------------------------------------------------- 观察者快照
@@ -670,6 +731,7 @@
   let snapshotTimer = null;
 
   const maybeEmitSnapshot = (trigger) => {
+    if (paused) return;
     if (!window.__atpCollectObservation) return;
     const now = Date.now();
     if (now - snapshotCooldown < 450) return;

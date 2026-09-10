@@ -36,6 +36,7 @@ export function ConfirmModal({
       open={open}
       onClose={onCancel}
       title={title}
+      className="confirm-modal"
       actions={
         <>
           <Button variant="ghost" disabled={busy} onClick={onCancel}>

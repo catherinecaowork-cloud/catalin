@@ -10,6 +10,8 @@ type Props = {
   onDeleteCredential: (credentialId: string) => void;
   onSaveLogin: (path: string, username: string, password: string) => Promise<void>;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
+  className?: string;
+  showTitle?: boolean;
 };
 
 export function CredentialForm({
@@ -19,6 +21,8 @@ export function CredentialForm({
   onDeleteCredential,
   onSaveLogin,
   onLog,
+  className = "record-web-section",
+  showTitle = true,
 }: Props) {
   const [loginPath, setLoginPath] = useState("/");
   const [loginUser, setLoginUser] = useState("");
@@ -26,8 +30,8 @@ export function CredentialForm({
   const [busy, setBusy] = useState(false);
 
   return (
-    <div className="sitemenu-add">
-      <SectionTitle>当前环境的登录</SectionTitle>
+    <div className={className}>
+      {showTitle ? <SectionTitle>当前环境的登录</SectionTitle> : null}
       {!selectedSiteId ? (
         <Muted>选一个站点后再添加账号。</Muted>
       ) : credsLoading ? (

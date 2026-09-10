@@ -260,19 +260,29 @@ def update_flow_setup(
     session: Session = Depends(get_session),
 ) -> FlowOut:
     flow = get_flow(session, scope, flow_id)
-    setup_id = payload.setup_flow_id or None
-    previous = flow.setup_flow_id
-    if setup_id:
+    previous_ids = list(getattr(flow, "setup_flow_ids", None) or [])
+    previous_single = flow.setup_flow_id
+    if payload.setup_flow_ids is not None:
+        setup_ids = list(payload.setup_flow_ids)
+    elif payload.setup_flow_id:
+        setup_ids = [payload.setup_flow_id]
+    else:
+        setup_ids = []
+    if flow.id in setup_ids:
+        raise HTTPException(status_code=409, detail="不能把自己当成前置")
+    for setup_id in setup_ids:
         setup = get_flow(session, scope, setup_id)
         if setup.id == flow.id:
             raise HTTPException(status_code=409, detail="不能把自己当成前置")
-    flow.setup_flow_id = setup_id
+    flow.setup_flow_ids = setup_ids
+    flow.setup_flow_id = setup_ids[-1] if setup_ids else None
     by_id = project_flow_map(session, flow)
     by_id[flow.id] = flow
     try:
         expand_setup_chain(flow, by_id)
     except ChainError as exc:
-        flow.setup_flow_id = previous
+        flow.setup_flow_ids = previous_ids
+        flow.setup_flow_id = previous_single
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
     return flow_out(flow)

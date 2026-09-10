@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web 录制</title>
+    <style>
+      :root {
+        --bg: #ececec;
+        --panel: #f7f7f7;
+        --border: #c8c8c8;
+        --text: #222;
+        --muted: #666;
+        --accent: #1976d2;
+        --record: #e53935;
+        --row-alt: #fafafa;
+        --selected: #dbe8f7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font: 12px/1.45 "Segoe UI", system-ui, sans-serif;
+      }
+      .dock {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        border-left: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, #fff, #efefef);
+      }
+      .title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--record);
+      }
+      .rec-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--record);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      .head-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .pause,
+      .stop {
+        border-radius: 4px;
+        padding: 5px 12px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .pause {
+        border: 1px solid #ffcc80;
+        background: #fff3e0;
+        color: #e65100;
+      }
+      .pause:hover {
+        background: #ffe0b2;
+      }
+      .pause.is-paused {
+        border-color: #81c784;
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .stop {
+        border: 1px solid #ef9a9a;
+        background: #ffebee;
+        color: #c62828;
+      }
+      .stop:hover {
+        background: #ffcdd2;
+      }
+      .head.paused .title {
+        color: #e65100;
+      }
+      .head.paused .rec-dot {
+        background: #fb8c00;
+        animation: none;
+      }
+      .url-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px 0;
+      }
+      .url-row label {
+        width: 28px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .url-row input {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        background: #fff;
+        font: inherit;
+        font-size: 11px;
+      }
+      .hint {
+        margin: 8px 12px 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .section {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 10px 12px 6px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+      .section-title {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+      }
+      .count {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .grid-wrap {
+        flex: 1;
+        min-height: 0;
+        margin: 0 10px 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        overflow: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      th,
+      td {
+        padding: 6px 7px;
+        border-bottom: 1px solid #e6e6e6;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: #efefef;
+        text-align: left;
+        font-size: 10px;
+        color: var(--muted);
+        z-index: 1;
+      }
+      tr:nth-child(even) td {
+        background: var(--row-alt);
+      }
+      tr.selected td {
+        background: var(--selected);
+      }
+      .mono {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 10px;
+      }
+      .col-item {
+        width: 34%;
+      }
+      .col-object {
+        width: 24%;
+      }
+      .col-input {
+        width: 18%;
+      }
+      .col-desc {
+        width: 24%;
+      }
+      .foot {
+        padding: 8px 12px 10px;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 11px;
+        background: #efefef;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dock">
+      <header class="head" id="head">
+        <div class="title">
+          <span class="rec-dot" aria-hidden="true"></span>
+          <span id="title-text">Web 录制</span>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="pause" id="pause-btn">暂停</button>
+          <button type="button" class="stop" id="stop-btn">停止</button>
+        </div>
+      </header>
+      <div class="url-row">
+        <label for="url">URL</label>
+        <input id="url" type="text" readonly />
+      </div>
+      <p class="hint" id="hint">在左侧浏览器操作页面元素；此处实时列出录到的动作。</p>
+      <div class="section">
+        <span class="section-title">RECORDED ACTIONS</span>
+        <span class="count" id="count">0 个动作</span>
+      </div>
+      <div class="grid-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-item">Item</th>
+              <th class="col-object">Object</th>
+              <th class="col-input">Input</th>
+              <th class="col-desc">Description</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <footer class="foot" id="status">录制中…</footer>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const runId = params.get("run_id") || "";
+      const startUrl = params.get("url") || "";
+      const intent = params.get("intent") || "";
+      const urlInput = document.getElementById("url");
+      const rowsEl = document.getElementById("rows");
+      const countEl = document.getElementById("count");
+      const statusEl = document.getElementById("status");
+      const stopBtn = document.getElementById("stop-btn");
+      const pauseBtn = document.getElementById("pause-btn");
+      const headEl = document.getElementById("head");
+      const titleTextEl = document.getElementById("title-text");
+      const hintEl = document.getElementById("hint");
+      urlInput.value = startUrl;
+      let recordingPaused = false;
+
+      const ACTION_LABELS = {
+        click: "Click",
+        fill: "Set Text",
+        choose: "Choose",
+        select: "Select",
+        upload: "Upload",
+        press: "Press Key",
+        goto: "Navigate",
+        scroll: "Scroll",
+      };
+
+      function actionLabel(type) {
+        return ACTION_LABELS[type] || type || "Action";
+      }
+
+      function objectOf(action) {
+        const candidates = action.candidates || [];
+        const hit = candidates.find((c) => c && c.value) || candidates[0];
+        if (hit && hit.value) return hit.value;
+        if (action.label) return action.label;
+        if (action.text) return action.text;
+        return "—";
+      }
+
+      function inputOf(action) {
+        if (action.type === "fill" || action.type === "choose" || action.type === "select") {
+          return action.value || "—";
+        }
+        if (action.type === "upload") return action.value || action.text || "—";
+        if (action.type === "press") return action.value || action.text || "Enter";
+        if (action.type === "click" && action.text) return action.text;
+        return action.value || "—";
+      }
+
+      function descOf(action) {
+        const parts = [action.scope, action.dialog].filter(Boolean);
+        return parts.length ? parts.join(" · ") : "—";
+      }
+
+      const NOISE_OBJECT = /^(请选择|请输入|请填写|下拉|搜索|添加|元素|输入框|—|-)$/;
+
+      function objectFromStep(step) {
+        const target = step.target || {};
+        if (target.trigger_css) return target.trigger_css;
+        const rank = { field: 0, matrix: 0, testid: 1, label: 2, css: 3, role: 4, placeholder: 5, text: 6 };
+        const candidates = (target.candidates || [])
+          .filter((c) => c && c.value && !NOISE_OBJECT.test(String(c.value).trim()))
+          .sort(
+            (a, b) =>
+              (rank[a.kind] ?? 7) - (rank[b.kind] ?? 7) ||
+              String(a.value).length - String(b.value).length,
+          );
+        if (candidates.length) {
+          const hit = candidates[0];
+          if (hit.kind === "role" && hit.name) {
+            return `${hit.value}_${String(hit.name).replace(/\s+/g, "_")}`;
+          }
+          return hit.value;
+        }
+        const label = step.label || "";
+        const quoted = label.match(/「([^」]+)」/);
+        if (quoted) return quoted[1];
+        return label || "—";
+      }
+
+      function inputFromStep(step) {
+        const action = step.action || "";
+        if (action === "fill" || action === "choose" || action === "select" || action === "scroll") {
+          return step.value != null && step.value !== "" ? String(step.value) : "—";
+        }
+        if (action === "upload") return step.value || "—";
+        return "—";
+      }
+
+      function buildRows(liveSteps, liveActions) {
+        const rows = [
+          {
+            key: "open",
+            item: "1 - Open Browser",
+            object: "Chrome",
+            input: "—",
+            desc: "Headed 模式",
+          },
+          {
+            key: "goto",
+            item: "2 - Navigate To Url",
+            object: "—",
+            input: startUrl || "—",
+            desc: intent || "—",
+          },
+        ];
+        const useSteps = Array.isArray(liveSteps) && liveSteps.length > 0;
+        const source = useSteps ? liveSteps : liveActions || [];
+        source.forEach((entry, offset) => {
+          const seq = rows.length + 1;
+          if (useSteps) {
+            rows.push({
+              key: `step-${entry.id || offset}-${seq}`,
+              item: `${seq} - ${actionLabel(entry.action)}`,
+              object: objectFromStep(entry),
+              input: inputFromStep(entry),
+              desc: entry.label || "—",
+              live: true,
+            });
+            return;
+          }
+          rows.push({
+            key: `live-${entry.index}-${seq}`,
+            item: `${seq} - ${actionLabel(entry.type)}`,
+            object: objectOf(entry),
+            input: inputOf(entry),
+            desc: descOf(entry),
+            live: true,
+          });
+        });
+        return rows;
+      }
+
+      function render(liveSteps, liveActions) {
+        const rows = buildRows(liveSteps, liveActions);
+        rowsEl.innerHTML = rows
+          .map(
+            (row, index) => `
+          <tr class="${index === rows.length - 1 ? "selected" : ""}" data-key="${row.key}">
+            <td class="mono col-item">${escapeHtml(row.item)}</td>
+            <td class="mono col-object">${escapeHtml(row.object)}</td>
+            <td class="mono col-input">${escapeHtml(row.input)}</td>
+            <td class="col-desc">${escapeHtml(row.desc)}</td>
+          </tr>`,
+          )
+          .join("");
+        const actionCount = Math.max(
+          Array.isArray(liveSteps) ? liveSteps.length : 0,
+          Array.isArray(liveActions) ? liveActions.length : 0,
+        );
+        countEl.textContent = `${actionCount} 个动作`;
+        const wrap = rowsEl.closest(".grid-wrap");
+        if (wrap) wrap.scrollTop = wrap.scrollHeight;
+      }
+
+      function syncPausedUi(paused) {
+        recordingPaused = !!paused;
+        if (headEl) headEl.classList.toggle("paused", recordingPaused);
+        if (titleTextEl) titleTextEl.textContent = recordingPaused ? "Web 录制（已暂停）" : "Web 录制";
+        if (hintEl) {
+          hintEl.textContent = recordingPaused
+            ? "录制已暂停。可调整页面或休息，点「继续」后再操作。"
+            : "在左侧浏览器操作页面元素；此处实时列出录到的动作。";
+        }
+        if (!pauseBtn) return;
+        pauseBtn.textContent = recordingPaused ? "继续" : "暂停";
+        pauseBtn.classList.toggle("is-paused", recordingPaused);
+        pauseBtn.setAttribute("aria-pressed", recordingPaused ? "true" : "false");
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      async function poll() {
+        if (!runId) {
+          statusEl.textContent = "缺少 run_id";
+          return;
+        }
+        try {
+          const res = await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}`);
+          if (!res.ok) {
+            statusEl.textContent = "无法同步录制状态";
+            return;
+          }
+          const data = await res.json();
+          const liveSteps = Array.isArray(data.live_steps) ? data.live_steps : [];
+          const liveActions = Array.isArray(data.live_actions) ? data.live_actions : [];
+          render(liveSteps, liveActions);
+          syncPausedUi(!!data.paused);
+          const status = data.status || "running";
+          const eventCount = Number(data.event_count || 0);
+          const stepCount = liveSteps.length || liveActions.length;
+          const debugTypes = Array.isArray(data.debug_types) ? data.debug_types.join(", ") : "";
+          if (status === "queued" || status === "running") {
+            const prefix = data.paused ? "已暂停" : "录制中…";
+            statusEl.textContent = debugTypes
+              ? `${prefix} 原始 ${eventCount} · 步骤 ${stepCount} · 最近类型 ${debugTypes}`
+              : `${prefix} 已采集 ${eventCount} 个原始事件，${stepCount} 条步骤`;
+          } else if (status === "passed") {
+            statusEl.textContent = "录制已结束，正在整理步骤…";
+          } else {
+            statusEl.textContent = `状态：${status}`;
+          }
+          if (["passed", "failed", "error"].includes(status)) {
+            stopBtn.disabled = true;
+            stopBtn.textContent = "已结束";
+            if (pauseBtn) {
+              pauseBtn.disabled = true;
+            }
+            return;
+          }
+        } catch (err) {
+          statusEl.textContent = "连接中断，重试中…";
+        }
+        window.setTimeout(poll, 600);
+      }
+
+      pauseBtn.addEventListener("click", async () => {
+        if (!runId || pauseBtn.disabled || stopBtn.disabled) return;
+        const endpoint = recordingPaused ? "resume" : "pause";
+        pauseBtn.disabled = true;
+        try {
+          const res = await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}/${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          if (!res.ok) {
+            statusEl.textContent = recordingPaused ? "继续失败，请重试" : "暂停失败，请重试";
+            return;
+          }
+          syncPausedUi(!recordingPaused);
+          statusEl.textContent = recordingPaused ? "已暂停，页面操作不会被记录" : "录制已继续";
+        } catch (err) {
+          statusEl.textContent = "连接失败，请重试";
+        } finally {
+          pauseBtn.disabled = false;
+        }
+      });
+
+      stopBtn.addEventListener("click", async () => {
+        if (!runId || stopBtn.disabled) return;
+        stopBtn.disabled = true;
+        stopBtn.textContent = "停止中…";
+        try {
+          await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}/stop`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          statusEl.textContent = "正在结束录制…";
+        } catch (err) {
+          stopBtn.disabled = false;
+          stopBtn.textContent = "停止";
+          statusEl.textContent = "停止失败，请重试";
+        }
+      });
+
+      render([], []);
+      poll();
+    </script>
+  </body>
+</html>

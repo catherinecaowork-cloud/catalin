@@ -8,6 +8,7 @@ type Props = {
   title?: ReactNode;
   titleId?: string;
   wide?: boolean;
+  className?: string;
   children: ReactNode;
   actions?: ReactNode;
 };
@@ -18,6 +19,7 @@ export function Modal({
   title,
   titleId: titleIdProp,
   wide,
+  className,
   children,
   actions,
 }: Props) {
@@ -29,7 +31,7 @@ export function Modal({
   return (
     <div className="modal-backdrop open">
       <div
-        className={cn("modal", wide && "wide")}
+        className={cn("modal", wide && "wide", className)}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

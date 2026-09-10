@@ -14,9 +14,20 @@ export function isConfirmedFlow(flow: Flow | undefined): boolean {
   return !!flow && ["reviewed", "golden", "active"].includes(flow.status);
 }
 
+export function flowSetupIds(flow: Flow): string[] {
+  if (flow.setup_flow_ids?.length) return flow.setup_flow_ids;
+  return flow.setup_flow_id ? [flow.setup_flow_id] : [];
+}
+
+export function flowSetupNames(flow: Flow, flows: Flow[]): string[] {
+  return flowSetupIds(flow)
+    .map((id) => flows.find((item) => item.id === id)?.name ?? "")
+    .filter(Boolean);
+}
+
 export function flowSetupName(flow: Flow, flows: Flow[]): string {
-  if (!flow.setup_flow_id) return "";
-  return flows.find((item) => item.id === flow.setup_flow_id)?.name ?? "";
+  const names = flowSetupNames(flow, flows);
+  return names.join(" → ");
 }
 
 export function flowListSub(flow: Flow, flows: Flow[]): string {

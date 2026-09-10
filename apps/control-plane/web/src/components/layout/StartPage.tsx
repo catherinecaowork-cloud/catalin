@@ -1,15 +1,12 @@
-import type { ModuleKind } from "../../types";
-import { MODULES } from "../../types";
-
-import { MODULE_ICONS } from "./moduleIcons";
-
-const QUICK_LINKS: ModuleKind[] = ["site", "record", "run", "history"];
+import { CircleDot, Clock, Play } from "lucide-react";
 
 type Props = {
-  onOpenModule: (kind: ModuleKind) => void;
+  onOpenRecord: () => void;
+  onOpenRun: () => void;
+  onOpenHistory: () => void;
 };
 
-export function StartPage({ onOpenModule }: Props) {
+export function StartPage({ onOpenRecord, onOpenRun, onOpenHistory }: Props) {
   return (
     <div className="editor-empty start-page">
       <div className="start-page-hero">
@@ -20,27 +17,25 @@ export function StartPage({ onOpenModule }: Props) {
       <section className="quick-links">
         <h4 className="quick-links-title">Quick Links</h4>
         <div className="quick-links-grid">
-          {QUICK_LINKS.map((kind) => {
-            const Icon = MODULE_ICONS[kind];
-            const meta = MODULES[kind];
-            return (
-              <button
-                key={kind}
-                type="button"
-                className="quick-link-card"
-                style={{ borderLeftColor: meta.color }}
-                onClick={() => onOpenModule(kind)}
-              >
-                <Icon size={18} strokeWidth={2} aria-hidden style={{ color: meta.color }} />
-                <span className="quick-link-name">{meta.title}</span>
-                <span className="quick-link-desc">{meta.description}</span>
-              </button>
-            );
-          })}
+          <button type="button" className="quick-link-card" style={{ borderLeftColor: "var(--c-record)" }} onClick={onOpenRecord}>
+            <CircleDot size={18} strokeWidth={2} aria-hidden style={{ color: "var(--c-record)" }} />
+            <span className="quick-link-name">录制</span>
+            <span className="quick-link-desc">顶栏「录制」开窗，保存后出现在左侧测试用例</span>
+          </button>
+          <button type="button" className="quick-link-card" style={{ borderLeftColor: "var(--c-run)" }} onClick={onOpenRun}>
+            <Play size={18} strokeWidth={2} aria-hidden style={{ color: "var(--c-run)" }} />
+            <span className="quick-link-name">运行</span>
+            <span className="quick-link-desc">在左侧展开测试用例或套件，选中后回放</span>
+          </button>
+          <button type="button" className="quick-link-card" style={{ borderLeftColor: "var(--c-history)" }} onClick={onOpenHistory}>
+            <Clock size={18} strokeWidth={2} aria-hidden style={{ color: "var(--c-history)" }} />
+            <span className="quick-link-name">运行记录</span>
+            <span className="quick-link-desc">左侧「运行记录」文件夹可打开历史回放</span>
+          </button>
         </div>
       </section>
 
-      <p className="start-page-hint">先在顶栏选择站点，再从左侧图标栏或上方快捷入口打开模块。</p>
+      <p className="start-page-hint">先在顶栏选择站点。录制在横向工具栏；用例、套件、记录在左侧资源树展开或收起。</p>
     </div>
   );
 }

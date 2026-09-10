@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../api/client";
 import { useRunContext } from "../../context/RunContext";
@@ -20,13 +20,17 @@ export function ImportFlowsModal({ open, onClose }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const others = otherSites(ctx.sites, ctx.siteId);
+  const others = useMemo(() => otherSites(ctx.sites, ctx.siteId), [ctx.sites, ctx.siteId]);
 
   useEffect(() => {
     if (!open) return;
     setPicks(new Set());
     setError("");
-    if (others.length) setSourceSiteId(others[0].id);
+    setSourceSiteId((current) => {
+      if (!others.length) return "";
+      if (current && others.some((site) => site.id === current)) return current;
+      return others[0].id;
+    });
   }, [open, others]);
 
   useEffect(() => {

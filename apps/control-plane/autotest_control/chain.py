@@ -31,6 +31,28 @@ class FlowLike(Protocol):
     site_id: str
     steps: list[Any]
     setup_flow_id: str | None
+    setup_flow_ids: list[str] | None
+
+
+def _direct_setup_ids(flow: FlowLike) -> list[str]:
+    setup_ids = list(getattr(flow, "setup_flow_ids", None) or [])
+    if setup_ids:
+        return setup_ids
+    setup_id = getattr(flow, "setup_flow_id", None) or None
+    return [setup_id] if setup_id else []
+
+
+def _depends_on(flow: FlowLike, target_id: str, by_id: dict[str, FlowLike], visiting: set[str]) -> bool:
+    if flow.id in visiting:
+        return False
+    visiting.add(flow.id)
+    for setup_id in _direct_setup_ids(flow):
+        if setup_id == target_id:
+            return True
+        setup = by_id.get(setup_id)
+        if setup is not None and _depends_on(setup, target_id, by_id, visiting):
+            return True
+    return False
 
 
 def expand_setup_chain(
@@ -43,6 +65,26 @@ def expand_setup_chain(
     if flow.id in _stack:
         names = [by_id[i].name if i in by_id else i for i in (*_stack, flow.id)]
         raise ChainError("前置脚本互相指向，形成循环：" + " → ".join(names))
+    setup_ids = list(getattr(flow, "setup_flow_ids", None) or [])
+    if setup_ids:
+        if flow.id in setup_ids:
+            raise ChainError(f"「{flow.name}」不能把自己放进前置列表")
+        chain: list[FlowLike] = []
+        for setup_id in setup_ids:
+            if setup_id in _stack:
+                names = [by_id[i].name if i in by_id else i for i in (*_stack, flow.id)]
+                raise ChainError("前置脚本互相指向，形成循环：" + " → ".join(names))
+            if setup_id == flow.id:
+                raise ChainError(f"「{flow.name}」不能把自己当成前置")
+            setup = by_id.get(setup_id)
+            if setup is None:
+                raise ChainError(f"「{flow.name}」的前置脚本已不存在，请重新选择")
+            if _depends_on(setup, flow.id, by_id, set()):
+                raise ChainError(f"「{setup.name}」已依赖「{flow.name}」，不能互为前置")
+            chain.append(setup)
+        chain.append(flow)
+        return chain
+
     chain: list[FlowLike] = []
     setup_id = getattr(flow, "setup_flow_id", None) or None
     if setup_id:

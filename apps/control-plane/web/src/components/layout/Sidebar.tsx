@@ -15,7 +15,7 @@ export function Sidebar({ open, title, body, foot, explorer }: Props) {
     <aside className={cn("sidebar", open && "open", explorer && "explorer")}>
       <div className="side-head">
         <b>{explorer ? "Tests Explorer" : title}</b>
-        {explorer ? <span className="side-head-sub">{title}</span> : null}
+        {explorer && title ? <span className="side-head-sub">{title}</span> : null}
       </div>
       {body}
       {foot}

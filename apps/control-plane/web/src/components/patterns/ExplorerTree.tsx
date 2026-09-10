@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FileText, Folder, Layers, PlayCircle, Search } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 
 import { cn, EmptyState, IconButton } from "../ui";
 
@@ -14,6 +14,7 @@ export type ExplorerNode = {
   selected?: boolean;
   pick?: ReactNode;
   onSelect?: () => void;
+  onContextMenu?: (event: MouseEvent) => void;
   onDelete?: () => void;
   deleteTitle?: string;
   markColor?: string;
@@ -44,7 +45,7 @@ function filterExplorerNodes(nodes: ExplorerNode[], filter: string): ExplorerNod
   const walk = (items: ExplorerNode[]): ExplorerNode[] => {
     const out: ExplorerNode[] = [];
     for (const node of items) {
-      if (node.children?.length) {
+      if (node.children) {
         const children = walk(node.children);
         if (children.length || matchesFilter(node, q)) {
           out.push({ ...node, children });
@@ -63,7 +64,7 @@ function defaultExpandedIds(nodes: ExplorerNode[]): Set<string> {
   const ids = new Set<string>();
   const walk = (items: ExplorerNode[]) => {
     for (const node of items) {
-      if (node.children?.length) {
+      if (node.children) {
         ids.add(node.id);
         walk(node.children);
       }
@@ -97,6 +98,14 @@ function TreeLeaf({ node, depth }: { node: ExplorerNode; depth: number }) {
       )}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
       onClick={node.disabled ? undefined : node.onSelect}
+      onContextMenu={
+        node.onContextMenu
+          ? (event) => {
+              event.preventDefault();
+              node.onContextMenu?.(event);
+            }
+          : undefined
+      }
       onKeyDown={(event) => event.key === "Enter" && !node.disabled && node.onSelect?.()}
       role={node.onSelect ? "button" : undefined}
       tabIndex={node.onSelect && !node.disabled ? 0 : undefined}
@@ -133,7 +142,7 @@ function TreeBranch({
   expandedIds: Set<string>;
   onToggle: (id: string) => void;
 }) {
-  if (node.children?.length) {
+  if (node.children) {
     const expanded = expandedIds.has(node.id);
     const count = node.children.length;
     return (

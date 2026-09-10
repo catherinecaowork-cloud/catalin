@@ -176,6 +176,7 @@ def start_recording(
         job=job.model_dump(mode="json"),
         required_labels=["headed"],
         stop_requested=False,
+        pause_requested=False,
     )
     session.add(run)
     session.flush()
@@ -199,12 +200,47 @@ def get_recording(
         .limit(1)
     ).first()
     event_count = (last.data or {}).get("event_count", 0) if last else 0
+    action_rows = session.scalars(
+        select(RunEvent)
+        .where(RunEvent.run_id == run_id, RunEvent.type == "record.action")
+        .order_by(RunEvent.seq.asc())
+    ).all()
+    live_from_actions = [row.data or {} for row in action_rows if isinstance(row.data, dict)]
+    live_from_progress: list[dict[str, Any]] = []
+    live_steps: list[dict[str, Any]] = []
+    if last and isinstance(last.data, dict):
+        raw = last.data.get("live_actions")
+        if isinstance(raw, list):
+            live_from_progress = [item for item in raw if isinstance(item, dict)]
+        raw_steps = last.data.get("live_steps")
+        if isinstance(raw_steps, list):
+            live_steps = [item for item in raw_steps if isinstance(item, dict)]
+    live_actions = (
+        live_from_actions
+        if len(live_from_actions) >= len(live_from_progress)
+        else live_from_progress
+    )
+    debug_types: list[str] = []
+    if last and isinstance(last.data, dict):
+        raw_debug = last.data.get("debug_types")
+        if isinstance(raw_debug, list):
+            debug_types = [str(item) for item in raw_debug]
     observation = run.observation_model if isinstance(run.observation_model, dict) else {}
     entries = observation.get("entries") if isinstance(observation.get("entries"), list) else []
+    job = run.job if isinstance(run.job, dict) else {}
+    record_start_path = job.get("record_start_path")
+    site = job.get("site") if isinstance(job.get("site"), dict) else {}
+    base_url = site.get("base_url")
     return {
         "status": run.status,
         "summary": run.summary or {},
+        "paused": bool(run.pause_requested),
         "event_count": event_count,
+        "live_actions": live_actions,
+        "live_steps": live_steps,
+        "debug_types": debug_types,
+        "record_start_path": record_start_path,
+        "base_url": base_url,
         "observation_model": observation,
         "recognized_count": len(entries),
     }
@@ -317,8 +353,37 @@ def stop_recording(
     if run is None or run.tenant_id != scope.tenant_id or run.project_id != scope.project_id:
         raise HTTPException(status_code=404, detail="录制任务不存在")
     run.stop_requested = True
+    run.pause_requested = False
     session.commit()
     return {"ok": True}
+
+
+@router.post("/recordings/{run_id}/pause")
+def pause_recording(
+    run_id: str, scope: Scope = Depends(get_scope), session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    run = session.get(Run, run_id)
+    if run is None or run.tenant_id != scope.tenant_id or run.project_id != scope.project_id:
+        raise HTTPException(status_code=404, detail="录制任务不存在")
+    if run.kind != "record" or run.status not in {"queued", "leased", "running"}:
+        raise HTTPException(status_code=409, detail="当前没有进行中的录制")
+    run.pause_requested = True
+    session.commit()
+    return {"ok": True, "paused": True}
+
+
+@router.post("/recordings/{run_id}/resume")
+def resume_recording(
+    run_id: str, scope: Scope = Depends(get_scope), session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    run = session.get(Run, run_id)
+    if run is None or run.tenant_id != scope.tenant_id or run.project_id != scope.project_id:
+        raise HTTPException(status_code=404, detail="录制任务不存在")
+    if run.kind != "record" or run.status not in {"queued", "leased", "running"}:
+        raise HTTPException(status_code=409, detail="当前没有进行中的录制")
+    run.pause_requested = False
+    session.commit()
+    return {"ok": True, "paused": False}
 
 
 @router.get("/runs/{run_id}/control")
@@ -331,7 +396,7 @@ def run_control(
         raise HTTPException(status_code=404, detail="运行不存在")
     if run.worker_id != worker.id:
         raise HTTPException(status_code=403, detail="该运行不属于此 worker")
-    return {"stop": bool(run.stop_requested)}
+    return {"stop": bool(run.stop_requested), "pause": bool(run.pause_requested)}
 
 
 

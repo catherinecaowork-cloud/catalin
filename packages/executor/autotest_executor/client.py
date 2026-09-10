@@ -7,6 +7,7 @@ Worker 只通过这层与平台交互：领任务、上报事件、换凭证、�
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ class ControlPlaneClient:
     def __init__(self, server: str, timeout: float = 60.0) -> None:
         self.server = server.rstrip("/")
         self._client = httpx.Client(base_url=self.server, timeout=timeout)
+        self._post_lock = threading.Lock()
         self.worker_id: str | None = None
         self.token: str | None = None
 
@@ -75,15 +77,16 @@ class ControlPlaneClient:
             "events": [json.loads(e.model_dump_json()) for e in events],
         }
         # 断网时重试，避免刚跑完的步骤结果丢掉
-        for attempt in range(3):
-            try:
-                response = self._client.post(f"/api/v1/runs/{run_id}/events", json=payload)
-                response.raise_for_status()
-                return
-            except Exception:
-                if attempt == 2:
+        with self._post_lock:
+            for attempt in range(3):
+                try:
+                    response = self._client.post(f"/api/v1/runs/{run_id}/events", json=payload)
+                    response.raise_for_status()
                     return
-                time.sleep(1.0 + attempt)
+                except Exception:
+                    if attempt == 2:
+                        return
+                    time.sleep(1.0 + attempt)
 
     def complete(
         self, run_id: str, status: str, summary: dict[str, Any], duration_seconds: float
@@ -123,17 +126,21 @@ class ControlPlaneClient:
         except Exception:
             return None
 
-    def should_stop(self, run_id: str) -> bool:
-        """控制台点了结束录制时返回 True。轮询失败当没停，避免误杀正在录的窗口。"""
+    def recording_control(self, run_id: str) -> dict[str, bool]:
+        """读取录制控制位：结束 / 暂停。轮询失败时保持继续录制。"""
         try:
             response = self._client.get(
                 f"/api/v1/runs/{run_id}/control",
                 params={"worker_id": self.worker_id, "token": self.token},
             )
             response.raise_for_status()
-            return bool(response.json().get("stop"))
+            data = response.json()
+            return {"stop": bool(data.get("stop")), "pause": bool(data.get("pause"))}
         except Exception:
-            return False
+            return {"stop": False, "pause": False}
+
+    def should_stop(self, run_id: str) -> bool:
+        return self.recording_control(run_id).get("stop", False)
 
     def close(self) -> None:
         self._client.close()

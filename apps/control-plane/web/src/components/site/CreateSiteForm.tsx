@@ -5,15 +5,22 @@ import { Button, Field, Input, SectionTitle } from "../ui";
 type Props = {
   onCreateSite: (name: string, baseUrl: string) => Promise<unknown>;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
+  className?: string;
+  showTitle?: boolean;
 };
 
-export function CreateSiteForm({ onCreateSite, onLog }: Props) {
+export function CreateSiteForm({
+  onCreateSite,
+  onLog,
+  className = "record-web-section",
+  showTitle = true,
+}: Props) {
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
 
   return (
-    <div className="sitemenu-add">
-      <SectionTitle>新增站点</SectionTitle>
+    <div className={className}>
+      {showTitle ? <SectionTitle>新增站点</SectionTitle> : null}
       <Field>
         <Input
           type="text"
