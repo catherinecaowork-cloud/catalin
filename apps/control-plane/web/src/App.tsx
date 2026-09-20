@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AppEditor } from "./components/app/AppEditor";
 import { ExplorerSidebar } from "./components/app/ExplorerSidebar";
@@ -11,7 +11,7 @@ import { TabStrip } from "./components/TabStrip";
 import { WorkerBar } from "./components/WorkerBar";
 import { HistoryProvider, useHistoryContext } from "./context/HistoryContext";
 import { RecordProvider } from "./context/RecordContext";
-import { RunProvider } from "./context/RunContext";
+import { RunProvider, useRunContext } from "./context/RunContext";
 import { useAiConfig } from "./hooks/useAiConfig";
 import { useLog } from "./hooks/useLog";
 import { useSites } from "./hooks/useSites";
@@ -34,6 +34,41 @@ type WorkbenchProps = {
   logLines: string[];
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
 };
+
+function RecordProviderWithFlowSync({
+  sitesState,
+  children,
+  ...recordProps
+}: {
+  sitesState: ReturnType<typeof useSites>;
+  children: ReactNode;
+  siteId: string | null;
+  siteCredentials: ReturnType<typeof useSites>["credentials"];
+  workers: ReturnType<typeof useWorker>["workers"];
+  onLog: WorkbenchProps["onLog"];
+  onOpenRecordTab: (runId: string, title: string) => void;
+  onRequestAiConfig: () => void;
+}) {
+  const { refresh, setSelectedFlowId } = useRunContext();
+
+  const onFlowSaved = useCallback(
+    ({ siteId: savedSiteId, flowId }: { siteId: string; flowId: string; flowName: string }) => {
+      if (savedSiteId !== sitesState.selectedSiteId) {
+        sitesState.setSelectedSiteId(savedSiteId);
+      } else {
+        void refresh();
+      }
+      setSelectedFlowId(flowId);
+    },
+    [refresh, setSelectedFlowId, sitesState.selectedSiteId, sitesState.setSelectedSiteId],
+  );
+
+  return (
+    <RecordProvider {...recordProps} onFlowSaved={onFlowSaved}>
+      {children}
+    </RecordProvider>
+  );
+}
 
 function AppWorkbenchBody({
   logOpen,
@@ -113,15 +148,16 @@ function AppWorkbenchBody({
   );
 
   return (
-    <RecordProvider
-      siteId={sitesState.selectedSiteId}
-      siteCredentials={sitesState.credentials}
-      workers={worker.workers}
-      onLog={onLog}
-      onOpenRecordTab={openRecordTab}
-      onRequestAiConfig={() => void ai.openModal()}
-    >
-      <RunProvider siteId={sitesState.selectedSiteId} sites={sitesState.sites} onLog={onLog}>
+    <RunProvider siteId={sitesState.selectedSiteId} sites={sitesState.sites} onLog={onLog}>
+      <RecordProviderWithFlowSync
+        sitesState={sitesState}
+        siteId={sitesState.selectedSiteId}
+        siteCredentials={sitesState.credentials}
+        workers={worker.workers}
+        onLog={onLog}
+        onOpenRecordTab={openRecordTab}
+        onRequestAiConfig={() => void ai.openModal()}
+      >
         <TitleBar
           tabs={
             <TabStrip
@@ -201,8 +237,8 @@ function AppWorkbenchBody({
         />
 
         <AiConfigModal ai={ai} />
-      </RunProvider>
-    </RecordProvider>
+      </RecordProviderWithFlowSync>
+    </RunProvider>
   );
 }
 

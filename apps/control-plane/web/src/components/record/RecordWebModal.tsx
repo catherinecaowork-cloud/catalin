@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, CircleDot } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../api/client";
 import { useRecordContext } from "../../context/RecordContext";
@@ -54,8 +54,6 @@ export function RecordWebModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [envManageOpen, setEnvManageOpen] = useState(false);
-
-  const site = useMemo(() => sites.find((item) => item.id === siteId) ?? null, [sites, siteId]);
 
   const refreshCredentials = useCallback(async (targetSiteId: string) => {
     try {
@@ -244,11 +242,6 @@ export function RecordWebModal({
               checked={ctx.aiCompileEnabled}
               onChange={(event) => ctx.setAiCompileEnabled(event.target.checked)}
             />
-            {site ? (
-              <p className="record-web-env-meta muted">
-                当前环境根地址：<code>{site.base_url}</code>
-              </p>
-            ) : null}
           </div>
         ) : null}
 

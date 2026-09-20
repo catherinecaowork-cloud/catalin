@@ -1434,15 +1434,26 @@ body {
   background: var(--bg-selected) !important;
 }
 
+.step-grid .col-idx,
+.step-grid .col-status {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
 .step-grid .col-idx {
   width: 36px;
   text-align: center;
   color: var(--muted);
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .step-grid .col-status {
-  width: 24px;
+  width: 28px;
   text-align: center;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .step-grid .col-item {
@@ -2428,6 +2439,10 @@ img.shot {
 
 .modal-backdrop:has(.record-env-manage-modal) {
   z-index: 60;
+}
+
+.modal-backdrop:has(.confirm-modal) {
+  z-index: 70;
 }
 
 .modal.record-env-manage-modal {

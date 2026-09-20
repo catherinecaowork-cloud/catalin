@@ -70,7 +70,7 @@ class BrowserSession:
         self._playwright = sync_playwright().start()
         if options.headless:
             launch_args: list[str] = []
-        elif self.job.kind == "record":
+        else:
             try:
                 from autotest_executor.browser.window_dock import get_work_area
 
@@ -81,16 +81,14 @@ class BrowserSession:
                 ]
             except Exception:
                 launch_args = ["--window-position=0,0", "--window-size=1920,1040"]
-        else:
-            launch_args = ["--window-position=80,80", "--window-size=1440,900"]
         self._browser = self._playwright.chromium.launch(
             headless=options.headless,
             args=launch_args,
         )
 
         context_kwargs: dict[str, Any] = {}
-        # 开窗录制：禁用固定 viewport，页面随 Chromium 窗口实际大小渲染
-        if not options.headless and self.job.kind == "record":
+        # 开窗：禁用固定 viewport，页面随 Chromium 窗口实际大小渲染
+        if not options.headless:
             context_kwargs["no_viewport"] = True
         else:
             context_kwargs["viewport"] = {
@@ -120,7 +118,13 @@ class BrowserSession:
 
         self._page = self._context.new_page()
         if not options.headless:
-            # 后台启动的 python 有时把窗口开在屏幕外，尽量拉到前台
+            # 后台启动的 python 有时把窗口开在屏幕外，用 CDP 贴齐可用工作区
+            try:
+                from autotest_executor.browser.window_dock import apply_main_only_layout
+
+                apply_main_only_layout(self._page)
+            except Exception:
+                pass
             try:
                 self._page.bring_to_front()
             except Exception:

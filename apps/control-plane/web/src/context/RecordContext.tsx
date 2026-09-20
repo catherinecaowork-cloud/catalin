@@ -92,6 +92,12 @@ export function useRecordContext() {
   return ctx;
 }
 
+type FlowSavedInfo = {
+  siteId: string;
+  flowId: string;
+  flowName: string;
+};
+
 type Props = {
   siteId: string | null;
   siteCredentials?: Credential[];
@@ -99,6 +105,7 @@ type Props = {
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onOpenRecordTab: (runId: string, title: string) => void;
   onRequestAiConfig: () => void;
+  onFlowSaved?: (info: FlowSavedInfo) => void;
   children: ReactNode;
 };
 
@@ -113,10 +120,12 @@ export function RecordProvider({
   onLog,
   onOpenRecordTab,
   onRequestAiConfig,
+  onFlowSaved,
   children,
 }: Props) {
   const [stage, setStage] = useState<RecordStage>("idle");
   const [recordRunId, setRecordRunId] = useState<string | null>(null);
+  const [recordSiteId, setRecordSiteId] = useState<string | null>(null);
   const [intent, setIntent] = useState("");
   const [credentialId, setCredentialId] = useState("");
   const [startPath, setStartPath] = useState("/");
@@ -366,6 +375,7 @@ export function RecordProvider({
     setRecordPaused(false);
     setLiveActions([]);
     setObservedEntries([]);
+    setRecordSiteId(effectiveSiteId);
     updateWaitingHint("queued");
     onLog("开始录制");
     try {
@@ -640,6 +650,7 @@ export function RecordProvider({
     pollTokenRef.current += 1;
     setStage("idle");
     setRecordRunId(null);
+    setRecordSiteId(null);
     setDraftSteps([]);
     setDraftDirty(false);
     setCompilation(null);
@@ -696,6 +707,13 @@ export function RecordProvider({
       );
       setSaveHint(`已保存：${result.flow_name}。建议立刻开窗回放验证一次。`);
       onLog(`已保存流程 ${result.flow_name}`);
+      if (recordSiteId) {
+        onFlowSaved?.({
+          siteId: recordSiteId,
+          flowId: result.flow_id,
+          flowName: result.flow_name,
+        });
+      }
       resetRecord();
     } catch (err) {
       setSaveHint(`保存失败：${err instanceof Error ? err.message : String(err)}`);
@@ -708,6 +726,8 @@ export function RecordProvider({
     flowName,
     normalizeSteps,
     onLog,
+    onFlowSaved,
+    recordSiteId,
     resetRecord,
   ]);
 
