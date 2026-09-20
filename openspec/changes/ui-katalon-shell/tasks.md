@@ -7,7 +7,7 @@
 
 ## Phase 0 — 准备（0.5 天）
 
-- [ ] 0.1 在 `apps/control-plane/web` 截当前五模块基准截图（站点/录制/运行/历史/日志），存 `docs/ui-baseline/`
+- [ ] 0.1 **持续**：五模块基准截图（站点/录制/运行/历史/日志）放 `docs/ui-baseline/`；UI 有可见改动就重拍，不是一次性任务
 - [x] 0.2 确认 dev 命令：`npm run dev` / build 路径
 - [x] 0.3 安装图标依赖：`npm i lucide-react`（仅 web 包）
 
@@ -114,7 +114,7 @@
 - [x] 6.1 空态页：`StartPage` Quick Links（站点/录制/运行/历史）
 - [x] 6.2 运行截图区 `shot-pane` / `img.shot` 浅灰边框
 - [x] 6.3 Modal 标题与正文浅色对齐
-- [ ] 6.4 与 Phase 0 基准截图对比，修遗漏（需本地目视）
+- [ ] 6.4 **持续**：对照 `docs/ui-baseline/` 目视五模块，有回归就修；不是本期一次性收口
 - [x] 6.5 更新 `docs/ui-katalon-redesign-plan.md`；build 通过
 
 **验收**：团队目视认可「Katalon 复古 IDE 风」；`npm run build` 成功
