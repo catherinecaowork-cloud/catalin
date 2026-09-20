@@ -147,7 +147,7 @@ def start_inspect(
         run_id=run_id,
         kind="inspect",
         # 踩点不查页面错误，只看结构，探针关掉省事
-        site=SiteRef(id=INSPECT_PLACEHOLDER, base_url=base_url, probe=ProbeConfig(enabled=False)),
+        site=SiteRef(id=_INSPECT_PLACEHOLDER, base_url=base_url, probe=ProbeConfig(enabled=False)),
         inspect_url=payload.login_url,
         options=RunOptions(headless=True, screenshot_each_step=False, video="off", trace="off"),
     )
@@ -155,7 +155,7 @@ def start_inspect(
         id=run_id,
         tenant_id=scope.tenant_id,
         project_id=scope.project_id,
-        site_id=INSPECT_PLACEHOLDER,
+        site_id=_INSPECT_PLACEHOLDER,
         kind="inspect",
         status="queued",
         job=job.model_dump(mode="json"),
