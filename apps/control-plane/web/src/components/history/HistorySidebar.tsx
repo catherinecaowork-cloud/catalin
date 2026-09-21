@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 
 import { useHistoryContext } from "../../context/HistoryContext";
 import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
-import { Button, Checkbox, EmptyState, ModuleHint, Muted } from "../ui";
+import { Button, EmptyState, ModuleHint } from "../ui";
 
 type Props = {
   onOpenRun: (runId: string, title: string) => void;
@@ -12,9 +12,6 @@ export function HistorySidebar({ onOpenRun }: Props) {
   const history = useHistoryContext();
   const [filter, setFilter] = useState("");
   const picked = history.selected.size;
-  const deletable = history.runs.filter((run) => !history.isBusy(run));
-  const allChecked =
-    deletable.length > 0 && deletable.every((run) => history.selected.has(run.id));
 
   const nodes = useMemo((): ExplorerNode[] => {
     const runNodes: ExplorerNode[] = history.runs.map((run) => {
@@ -23,43 +20,40 @@ export function HistorySidebar({ onOpenRun }: Props) {
       const dur = run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : "";
       return {
         id: run.id,
-        kind: "run",
+        kind: "run" as const,
         label: `${history.kindText(run.kind)} · ${history.statusText(run.status)}`,
         sub: `${time} ${dur}`.trim(),
         markColor: "var(--c-history)",
+        selected: history.selected.has(run.id),
         disabled: busy,
-        pick: (
-          <input
-            type="checkbox"
-            className="pick"
-            disabled={busy}
-            checked={history.selected.has(run.id)}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => history.togglePick(run.id, event.target.checked)}
-          />
-        ),
-        onSelect: () => onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`),
+        onSelect: (event) => {
+          const additive = Boolean(event?.ctrlKey || event?.metaKey);
+          const range = Boolean(event?.shiftKey);
+          history.selectRun(run.id, { additive, range });
+          if (!additive && !range) {
+            onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`);
+          }
+        },
       };
     });
 
     if (!runNodes.length) return [];
-    return [{ id: "folder-runs", kind: "folder", label: "运行记录", children: runNodes }];
-  }, [history, onOpenRun]);
+    return [
+      {
+        id: "folder-runs",
+        kind: "folder",
+        label: "运行记录",
+        sub: picked ? `${runNodes.length} · 已选 ${picked}` : String(runNodes.length),
+        children: runNodes,
+      },
+    ];
+  }, [history, onOpenRun, picked]);
 
   return (
     <>
-      <ModuleHint>勾选无用记录删除。点一行可打开直播；进行中不可删。</ModuleHint>
-      <Checkbox
-        className="check hist-tools"
-        label={
-          <>
-            全选
-            <Muted>{picked ? `已选 ${picked}` : "未选"}</Muted>
-          </>
-        }
-        checked={allChecked}
-        onChange={(event) => history.toggleAll(event.target.checked)}
-      />
+      <ModuleHint>
+        单击打开；Ctrl 单击加选，Shift 单击选区间，Ctrl+A 全选。进行中的记录不能选。
+      </ModuleHint>
       {history.loading ? (
         <EmptyState>加载中…</EmptyState>
       ) : history.runs.length === 0 ? (
@@ -71,6 +65,7 @@ export function HistorySidebar({ onOpenRun }: Props) {
           onFilterChange={setFilter}
           filterPlaceholder="搜索运行记录…"
           emptyMessage="没有匹配的运行记录"
+          onSelectAll={history.selectAll}
         />
       )}
     </>

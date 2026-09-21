@@ -71,6 +71,15 @@
     let node = el;
     const tabItem = node && closestOf(node, '.el-tabs__item');
     if (tabItem && closestOf(tabItem, STD_DROPDOWN_SEL)) return tabItem;
+    const panelTag = node && closestOf(node, '.el-tag');
+    if (
+      panelTag
+      && closestOf(panelTag, STD_DROPDOWN_SEL)
+      && closestOf(panelTag, '.sizeTag, .select-options, .select-body')
+      && !closestOf(node, '.el-tabs__item, .el-tabs__header, .select-header, .title-tag')
+    ) {
+      return panelTag;
+    }
     // 只把标准 Ant/Element 选项抬到 option 节点。自定义色板/面板要留在内部 DOM。
     const stdOption = node && closestOf(node, STD_OPTION_SEL);
     if (stdOption) return stdOption;
@@ -162,7 +171,7 @@
     return false;
   };
   const isEphemeralClass = (cls) => (
-    /^(is-focused|is-focus|is-active|is-hover|is-selected|is-disabled|is-checked|ant-select-open|ant-select-focused|ant-picker-focused)$/i.test(cls)
+    /^(is-focused|is-focusing|is-focus|is-active|is-hover|is-selected|is-disabled|is-checked|is-closable|ant-select-open|ant-select-focused|ant-picker-focused)$/i.test(cls)
   );
   const cssPath = (el) => {
     const parts = [];
@@ -190,6 +199,10 @@
     el = climbToActionable(el);
     if (!el || !el.tagName) return null;
     if (ICON_TAGS.has(el.tagName)) return null;
+    const tagged = window.__atpSelectTag
+      ? (window.__atpSelectTag(raw) || window.__atpSelectTag(el))
+      : null;
+    if (tagged) el = tagged;
     const candidates = [];
     const inPortal = !!closestOf(raw, PORTAL_SEL) || !!closestOf(el, PORTAL_SEL);
     const stdOption = closestOf(el, STD_OPTION_SEL) || closestOf(raw, STD_OPTION_SEL);
@@ -211,7 +224,7 @@
       if (an) candidates.push({ kind: 'css', value: `[data-action-name="${CSS.escape(an)}"]` });
     }
 
-    for (const item of innerLocators(raw)) candidates.push(item);
+    for (const item of innerLocators(tagged || raw)) candidates.push(item);
 
     if (stdOption) {
       const title = (stdOption.getAttribute('title') || stdOption.getAttribute('aria-label') || visibleText(stdOption) || '').trim();
@@ -300,6 +313,36 @@
       }
       if (!candidates.some((c) => c.kind === 'label' && c.value === placeholderLabel)) {
         candidates.unshift({ kind: 'label', value: placeholderLabel });
+      }
+    }
+
+    const tagEl = tagged
+      || closestOf(el, '.sizeTag .el-tag, .select-options .el-tag, .select-body .el-tag')
+      || closestOf(raw, '.sizeTag .el-tag, .select-options .el-tag');
+    if (tagEl && closestOf(tagEl, STD_DROPDOWN_SEL)) {
+      const tagTitle = (
+        ((tagEl.querySelector && tagEl.querySelector('.el-tag__content, pre')) || {}).innerText
+        || visibleText(tagEl)
+        || ''
+      ).trim().split('\n')[0].trim();
+      if (tagTitle) {
+        const rest = candidates.filter((c) => !(c.kind === 'text' && c.value === tagTitle));
+        candidates.length = 0;
+        candidates.push({ kind: 'text', value: tagTitle }, ...rest);
+      }
+      if (closestOf(tagEl, '.sizeTag')) {
+        const pane = closestOf(tagEl, '.el-tab-pane');
+        if (pane && pane.id && !isEphemeralId(pane.id)) {
+          const paneHint = `#${CSS.escape(pane.id)} .sizeTag`;
+          if (!candidates.some((c) => c.value === paneHint)) {
+            candidates.push({ kind: 'css', value: paneHint });
+          }
+        }
+      } else if (closestOf(tagEl, '.select-options')) {
+        const colorHint = 'div.select-options > span.el-tag';
+        if (!candidates.some((c) => (c.value || '').includes('el-tag'))) {
+          candidates.push({ kind: 'css', value: colorHint });
+        }
       }
     }
 
@@ -596,14 +639,58 @@
     return null;
   };
 
+  const matchingSizeTag = (title, root, allowHidden) => {
+    if (!title || !root) return null;
+    const nodes = root.querySelectorAll ? root.querySelectorAll('.sizeTag .el-tag') : [];
+    let hiddenHit = null;
+    for (const node of nodes) {
+      if (optionTitle(node) !== title) continue;
+      if (isShown(node) && paneShown(node)) return node;
+      if (allowHidden && !hiddenHit) hiddenHit = node;
+    }
+    return hiddenHit;
+  };
+
   const selectTagOf = (el) => {
     if (!el) return null;
     if (closestOf(el, '.el-tag__close')) return null;
     if (closestOf(el, '.el-tabs__item, .el-tabs__header, .select-header, .title-tag')) return null;
     const tag = closestOf(el, '.el-tag');
-    if (!tag || !isShown(tag) || !paneShown(tag)) return null;
-    if (!closestOf(tag, '.sizeTag, .select-options')) return null;
+    if (!tag || !closestOf(tag, STD_DROPDOWN_SEL)) return null;
+    const title = optionTitle(tag);
+    const panel = closestOf(tag, STD_DROPDOWN_SEL) || closestOf(tag, '.el-tabs') || document;
+    const inSize = closestOf(tag, '.sizeTag');
+    if (inSize && (isShown(tag) || paneShown(tag) || title)) return tag;
+    if (!isShown(tag)) return null;
+    const visibleSize = matchingSizeTag(title, panel, false);
+    if (visibleSize) return visibleSize;
+    const closableChip = !!(tag.classList && tag.classList.contains('is-closable') && !inSize);
+    if (closableChip) {
+      const hiddenSize = matchingSizeTag(title, panel, true);
+      if (hiddenSize) return hiddenSize;
+    }
+    if (!closestOf(tag, '.sizeTag, .select-options, .select-body')) return null;
     return tag;
+  };
+
+  const paneTabOf = (el) => {
+    const pane = closestOf(el, '.el-tab-pane');
+    if (!pane) return null;
+    const rawId = (pane.id || '').trim();
+    const name = rawId.replace(/^pane-/, '');
+    const tabsRoot = closestOf(pane, '.el-tabs');
+    if (!tabsRoot) return null;
+    if (rawId) {
+      const byId = document.getElementById(rawId.replace(/^pane-/, 'tab-'));
+      if (byId) return byId;
+    }
+    if (!name) return null;
+    const items = tabsRoot.querySelectorAll('.el-tabs__item');
+    for (const item of items) {
+      const label = ((item.innerText || '').trim().split('\n')[0] || '');
+      if (label === name) return item;
+    }
+    return null;
   };
 
   const selectOptionOf = (el) => {
@@ -681,7 +768,7 @@
         }
         const topTab = selectTabOf(top);
         if (topTab) return topTab;
-        const topTag = selectTagOf(top);
+        const topTag = selectTagOf(top) || selectTagOf(e && e.target);
         if (topTag) return topTag;
         const topOption = selectOptionOf(top);
         if (topOption) return topOption;
@@ -760,6 +847,7 @@
   window.__atpSelectOption = selectOptionOf;
   window.__atpSelectTag = selectTagOf;
   window.__atpSelectTab = selectTabOf;
+  window.__atpPaneTab = paneTabOf;
   window.__atpDeepNode = hitNode;
   window.__atpComboDescribeEl = comboTriggerEl;
   window.__atpWidgetInfo = widgetInfoOf;

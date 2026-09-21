@@ -348,12 +348,14 @@ DROPDOWN_OPTION_MARKERS = ("ant-select-item-option", "el-select-dropdown__item")
 SELECT_TRIGGER_MARKERS = ("el-select__wrapper", "ant-select-selector")
 _EPHEMERAL_CSS_STATE = (
     "is-focused",
+    "is-focusing",
     "is-focus",
     "is-active",
     "is-hover",
     "is-selected",
     "is-disabled",
     "is-checked",
+    "is-closable",
     "ant-select-open",
     "ant-select-focused",
     "ant-picker-focused",
@@ -361,12 +363,17 @@ _EPHEMERAL_CSS_STATE = (
 
 
 def sanitize_css_selector(value: str) -> str:
-    """去掉录制瞬间的状态 class（如 is-focused），避免回放时对不上。"""
+    """去掉录制瞬间的状态 class（如 is-focused），避免回放时对不上。
+
+    必须按完整 class 剥，不能把 is-focusing 截成 wrappering。
+    """
     out = value
     for cls in _EPHEMERAL_CSS_STATE:
-        out = out.replace(f".{cls}", "")
+        out = re.sub(rf"\.{re.escape(cls)}(?=$|[\s,>|:])", "", out)
     out = re.sub(r"\.(?=[\s,>|]|$)", "", out)
     return out
+
+
 DATE_PICKER_MARKERS = ("ant-picker-cell", "ant-picker-dropdown", "el-date-table", "el-date-editor")
 PICKER_PANEL_VISIBLE = ".ant-picker-dropdown:visible, .el-picker-panel:visible"
 DATE_PICKER_WIDGETS = frozenset({"ant-date-picker", "el-date-picker"})

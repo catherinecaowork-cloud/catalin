@@ -170,6 +170,10 @@ body {
   background: var(--bg-selected);
 }
 
+.context-menu-item.danger {
+  color: var(--fail);
+}
+
 .context-menu-item-label {
   min-width: 0;
   overflow: hidden;
@@ -838,6 +842,15 @@ body {
   overflow: auto;
 }
 
+.explorer-tree:focus {
+  outline: none;
+}
+
+.explorer-tree:focus-visible {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+
 .tree-folder-head {
   width: 100%;
   border: 0;
@@ -888,6 +901,7 @@ body {
 
 .tree-leaf.explorer-item {
   border-radius: var(--radius);
+  user-select: none;
 }
 
 .tree-leaf.explorer-item:hover {
@@ -976,13 +990,6 @@ body {
   height: 15px;
 }
 
-.explorer-item span.pick {
-  display: inline-block;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
 .explorer-label {
   font-size: 11px;
   color: var(--muted);
@@ -1001,7 +1008,8 @@ body {
   line-height: 1;
 }
 
-.explorer-item:hover .del {
+.explorer-item:hover .del,
+.explorer-item:focus-within .del {
   display: block;
 }
 

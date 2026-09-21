@@ -289,6 +289,54 @@ def main() -> int:
     _assert("弹窗" in tab["label"] and "选项" not in tab["label"], f"下拉里的点击应写弹窗不是选项，实际 {tab['label']}")
     _assert("新增" in tab["label"] and "女装" in tab["label"], f"应带弹窗名和点击对象，实际 {tab['label']}")
 
+    grouped_size, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "text", "value": "S"},
+                        {"kind": "css", "value": "div#pane-上装尺码组 > div.sizeTag > span.el-tag"},
+                    ],
+                    "scope": {
+                        "kind": "dropdown",
+                        "name": "新增",
+                        "path": "dropdown「新增」 / 字段「女装上装」 / span.el-tag",
+                    },
+                    "panel": "el-select-dropdown:teleport",
+                },
+                "text": "S",
+                "context": {"dialog": "新增", "label": "女装上装"},
+            }
+        ],
+        "http://example.test/app",
+    )
+    size_s = next(s for s in grouped_size if s["action"] == "click")
+    _assert("S" in size_s["label"], f"没点 tab 时尺码标题应是点中的值，实际 {size_s['label']}")
+    _assert("女装上装" not in size_s["label"], f"不能用面板分组名当尺码标题，实际 {size_s['label']}")
+
+    second_color, _ = compile_events(
+        [
+            {
+                "type": "click",
+                "target": {
+                    "candidates": [
+                        {"kind": "text", "value": "青色"},
+                        {"kind": "css", "value": "div.select-options > span.el-tag.el-tag--info"},
+                    ],
+                    "scope": {"kind": "dropdown", "name": "新增"},
+                    "panel": "el-select-dropdown:teleport",
+                },
+                "text": "青色",
+                "context": {"dialog": "新增", "label": "黄色"},
+            }
+        ],
+        "http://example.test/app",
+    )
+    cyan = next(s for s in second_color if s["action"] == "click")
+    _assert("青色" in cyan["label"], f"第二色标题应是青色，实际 {cyan['label']}")
+    _assert("黄色" not in cyan["label"], f"第二色不能沿用上一颗颜色名，实际 {cyan['label']}")
+
     size_open = {
         "candidates": [
             {"kind": "text", "value": "尺码"},

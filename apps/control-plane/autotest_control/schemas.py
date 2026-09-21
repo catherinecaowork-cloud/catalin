@@ -100,6 +100,10 @@ class FlowSetupUpdate(BaseModel):
     setup_flow_ids: list[str] | None = None
 
 
+class FlowUpdate(BaseModel):
+    name: str
+
+
 class FlowImportIn(BaseModel):
     flow_ids: list[str]
 

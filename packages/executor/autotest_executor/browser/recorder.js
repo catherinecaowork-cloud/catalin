@@ -228,6 +228,9 @@
       };
     }
     if (portal) rememberCombo(target, context);
+    if (el.matches && el.matches('.el-tabs__item')) {
+      lastPaneTabKey = el.id || text;
+    }
     emit({
       type: 'click',
       target,
@@ -287,8 +290,22 @@
     };
   };
 
+  const paneTab = (el) => (window.__atpPaneTab ? window.__atpPaneTab(el) : null);
+  let lastPaneTabKey = '';
+
+  const emitPaneTabIfNeeded = (el) => {
+    const tab = paneTab(el);
+    if (!tab) return;
+    const title = ((tab.innerText || '').trim().split('\n')[0] || '');
+    const key = tab.id || title;
+    if (!key || key === lastPaneTabKey) return;
+    lastPaneTabKey = key;
+    emitPlainClick(tab);
+  };
+
   const emitComboOpen = (host) => {
     lastComboTrigger = host;
+    lastPaneTabKey = '';
     const trigger = comboTrigger(host) || host;
     const context = contextOf(trigger);
     const info = widgetOf(trigger) || widgetOf(host);
@@ -403,6 +420,7 @@
     const now = Date.now();
     const key = 'panel|' + title;
     if (key === lastClickKey && now - lastClickTs < 800) return true;
+    emitPaneTabIfNeeded(el);
     const context = contextOf(el);
     const target = decorateTarget(el, describe(el), {
       context,
@@ -420,6 +438,7 @@
       target,
       context: {
         ...context,
+        label: title,
         widget: target.widget,
         panel: target.panel,
         trigger_css: target.trigger_css,

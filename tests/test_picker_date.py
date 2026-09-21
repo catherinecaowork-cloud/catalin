@@ -11,6 +11,24 @@ def test_sanitize_css_removes_focus_state() -> None:
     assert sanitize_css_selector(raw) == "div.el-select > div.el-select__wrapper"
 
 
+def test_sanitize_css_does_not_chop_focusing_into_wrappering() -> None:
+    raw = "div.widget-container > div > div.el-select > div.el-select__wrapper.is-focusing"
+    assert sanitize_css_selector(raw) == (
+        "div.widget-container > div > div.el-select > div.el-select__wrapper"
+    )
+
+
+def test_sanitize_css_strips_selected_size_tag_state() -> None:
+    raw = (
+        "ul.el-scrollbar__view.el-select-dropdown__list > "
+        "div.select-body > div.select-options > span.el-tag.is-closable"
+    )
+    assert sanitize_css_selector(raw) == (
+        "ul.el-scrollbar__view.el-select-dropdown__list > "
+        "div.select-body > div.select-options > span.el-tag"
+    )
+
+
 def test_picker_date_value_from_click_step() -> None:
     step = Step(
         id="s1",

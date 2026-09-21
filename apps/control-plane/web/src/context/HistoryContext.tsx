@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,14 +14,19 @@ import type { RunRecord } from "../types";
 import { kindText } from "../utils/kind";
 import { statusText } from "../utils/flow";
 
+type SelectModifiers = {
+  additive?: boolean;
+  range?: boolean;
+};
+
 type HistoryContextValue = {
   runs: RunRecord[];
   selected: Set<string>;
   loading: boolean;
   refresh: () => Promise<void>;
   notifyRunFinished: () => void;
-  togglePick: (runId: string, checked: boolean) => void;
-  toggleAll: (checked: boolean) => void;
+  selectRun: (runId: string, modifiers?: SelectModifiers) => void;
+  selectAll: () => void;
   deleteSelected: () => Promise<void>;
   isBusy: (run: RunRecord) => boolean;
   kindText: (kind: string) => string;
@@ -47,6 +53,7 @@ export function HistoryProvider({
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const anchorIdRef = useRef<string | null>(null);
 
   const isBusy = useCallback(
     (run: RunRecord) => ["queued", "leased", "running"].includes(run.status),
@@ -59,6 +66,7 @@ export function HistoryProvider({
       const rows = await api<RunRecord[]>("/api/v1/runs?limit=100");
       setRuns(rows.filter((run) => !siteId || run.site_id === siteId));
       setSelected(new Set());
+      anchorIdRef.current = null;
     } catch (err) {
       onLog(`加载历史失败：${err instanceof Error ? err.message : String(err)}`, "error");
     } finally {
@@ -74,26 +82,48 @@ export function HistoryProvider({
     void refresh();
   }, [refresh]);
 
-  const togglePick = useCallback((runId: string, checked: boolean) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(runId);
-      else next.delete(runId);
-      return next;
-    });
-  }, []);
-
-  const toggleAll = useCallback(
-    (checked: boolean) => {
-      if (!checked) {
-        setSelected(new Set());
-        return;
-      }
-      const ids = runs.filter((run) => !isBusy(run)).map((run) => run.id);
-      setSelected(new Set(ids));
-    },
+  const selectableIds = useCallback(
+    () => runs.filter((run) => !isBusy(run)).map((run) => run.id),
     [runs, isBusy],
   );
+
+  const selectRun = useCallback(
+    (runId: string, modifiers: SelectModifiers = {}) => {
+      const ids = selectableIds();
+      if (!ids.includes(runId)) return;
+      if (modifiers.range) {
+        const anchor =
+          anchorIdRef.current && ids.includes(anchorIdRef.current)
+            ? anchorIdRef.current
+            : runId;
+        const from = ids.indexOf(anchor);
+        const to = ids.indexOf(runId);
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        setSelected(new Set(ids.slice(lo, hi + 1)));
+        if (!anchorIdRef.current) anchorIdRef.current = runId;
+        return;
+      }
+      if (modifiers.additive) {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(runId)) next.delete(runId);
+          else next.add(runId);
+          return next;
+        });
+        if (!anchorIdRef.current) anchorIdRef.current = runId;
+        return;
+      }
+      setSelected(new Set([runId]));
+      anchorIdRef.current = runId;
+    },
+    [selectableIds],
+  );
+
+  const selectAll = useCallback(() => {
+    const ids = selectableIds();
+    setSelected(new Set(ids));
+    if (ids.length && !anchorIdRef.current) anchorIdRef.current = ids[0];
+  }, [selectableIds]);
 
   const deleteSelected = useCallback(async () => {
     const ids = [...selected];
@@ -122,8 +152,8 @@ export function HistoryProvider({
       loading,
       refresh,
       notifyRunFinished,
-      togglePick,
-      toggleAll,
+      selectRun,
+      selectAll,
       deleteSelected,
       isBusy,
       kindText,
@@ -135,8 +165,8 @@ export function HistoryProvider({
       loading,
       refresh,
       notifyRunFinished,
-      togglePick,
-      toggleAll,
+      selectRun,
+      selectAll,
       deleteSelected,
       isBusy,
     ],

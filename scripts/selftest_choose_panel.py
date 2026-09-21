@@ -125,6 +125,21 @@ def main() -> int:
     )
     _assert(panel_choice_kind(tab) == "tab", "女装是尺码面板的 tab")
     _assert(panel_choice_kind(size) == "tag", "155 是尺码标签")
+    sml = Step(
+        id="t3",
+        action="click",
+        label="在「新增」弹窗：点击「S」",
+        target=Target(
+            candidates=[
+                Candidate(kind="text", value="S"),
+                Candidate(
+                    kind="css",
+                    value="ul.el-select-dropdown__list > div.select-body > div.select-options > span.el-tag.is-closable",
+                ),
+            ]
+        ),
+    )
+    _assert(panel_choice_kind(sml) == "tag", "S/M/L 字母尺码也是标签，不能当普通文字点")
 
     print("selftest_choose_panel ok")
     return 0

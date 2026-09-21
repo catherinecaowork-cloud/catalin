@@ -31,7 +31,9 @@ type RunContextValue = {
   loading: boolean;
   refresh: () => Promise<void>;
   saveSuite: (name: string) => Promise<void>;
+  renameSuite: (suite: Suite, name: string) => Promise<void>;
   deleteSuite: (suiteId: string) => Promise<void>;
+  renameFlow: (flow: Flow, name: string) => Promise<void>;
   updateSetup: (flowId: string, setupFlowIds: string[]) => Promise<void>;
   promoteFlow: (flow: Flow) => Promise<void>;
   deleteFlow: (flow: Flow) => Promise<void>;
@@ -154,6 +156,22 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
     [siteId, pickedFlowIds, onLog, refresh],
   );
 
+  const renameSuite = useCallback(
+    async (suite: Suite, name: string) => {
+      const next = name.trim();
+      if (!next) throw new Error("请填写名称");
+      if (next === suite.name) return;
+      const updated = await api<Suite>(`/api/v1/suites/${suite.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: next }),
+      });
+      setSuites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      onLog(`已将套件「${suite.name}」改名为「${updated.name}」`);
+      await refresh();
+    },
+    [onLog, refresh],
+  );
+
   const deleteSuite = useCallback(
     async (suiteId: string) => {
       await api(`/api/v1/suites/${suiteId}`, { method: "DELETE" });
@@ -162,6 +180,22 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
       await refresh();
     },
     [selectedSuiteId, onLog, refresh],
+  );
+
+  const renameFlow = useCallback(
+    async (flow: Flow, name: string) => {
+      const next = name.trim();
+      if (!next) throw new Error("请填写名称");
+      if (next === flow.name) return;
+      const updated = await api<Flow>(`/api/v1/flows/${flow.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: next }),
+      });
+      setFlows((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      onLog(`已将「${flow.name}」改名为「${updated.name}」`);
+      await refresh();
+    },
+    [onLog, refresh],
   );
 
   const updateSetup = useCallback(
@@ -293,7 +327,9 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
       loading,
       refresh,
       saveSuite,
+      renameSuite,
       deleteSuite,
+      renameFlow,
       updateSetup,
       promoteFlow,
       deleteFlow,
@@ -318,7 +354,9 @@ export function RunProvider({ siteId, sites, onLog, children }: Props) {
       loading,
       refresh,
       saveSuite,
+      renameSuite,
       deleteSuite,
+      renameFlow,
       updateSetup,
       promoteFlow,
       deleteFlow,

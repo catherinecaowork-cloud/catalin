@@ -39,7 +39,7 @@ export function ExplorerItem({
       role={onSelect ? "button" : undefined}
       tabIndex={onSelect ? 0 : undefined}
     >
-      {pick ?? <span className="pick" />}
+      {pick}
       <span className="mark" style={{ background: markColor }} />
       <span className="name">{name}</span>
       {sub ? <span className="sub">{sub}</span> : null}

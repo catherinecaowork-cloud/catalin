@@ -748,6 +748,187 @@ def pick_ant_date(
     )
 
 
+_PANEL_SIZE_TAG = (
+    ".el-tab-pane[aria-hidden='false'] .sizeTag .el-tag, "
+    ".el-tab-pane:visible .sizeTag .el-tag, "
+    ".sizeTag .el-tag"
+)
+_PANEL_OPTION_TAG = (
+    ".select-body .select-options .el-tag, "
+    ".select-options .el-tag"
+)
+_PANEL_TAB_HOST = ".el-tabs__item, [role=tab]"
+
+_JS_PANEL_CLICK = """(root, opts) => {
+  const name = opts.name;
+  const kind = opts.kind;
+  const shown = (el) => {
+    if (!el) return false;
+    const pane = el.closest('.el-tab-pane');
+    if (pane && pane.getAttribute('aria-hidden') === 'true') return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+    const box = el.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  };
+  const labelOf = (el) => {
+    const inner = el.querySelector && el.querySelector('.el-tag__content, pre');
+    const raw = ((inner && (inner.innerText || '')) || el.innerText || '').trim();
+    return (raw.split('\\n')[0] || '').trim();
+  };
+  const tabs = Array.from(root.querySelectorAll('.el-tabs__item, [role=tab]'));
+  if (kind === 'tab') {
+    const tab = tabs.find((el) => shown(el) && labelOf(el) === name);
+    if (!tab) return false;
+    tab.click();
+    return true;
+  }
+  const sizeTags = Array.from(root.querySelectorAll('.sizeTag .el-tag'));
+  const sizeNames = new Set(sizeTags.map(labelOf).filter(Boolean));
+  const clickNamed = (nodes) => {
+    for (const el of nodes) {
+      if (!shown(el) || labelOf(el) !== name) continue;
+      const chip = el.classList.contains('is-closable') && !el.closest('.sizeTag');
+      if (chip && sizeNames.has(name)) continue;
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      el.click();
+      return true;
+    }
+    return false;
+  };
+  if (clickNamed(sizeTags)) return true;
+  const options = Array.from(root.querySelectorAll(
+    '.select-body .select-options .el-tag, .select-options .el-tag'
+  ));
+  return clickNamed(options);
+}"""
+
+
+def _js_panel_click(panel, name: str, kind: str) -> bool:
+    try:
+        return bool(panel.evaluate(_JS_PANEL_CLICK, {"name": name, "kind": kind}))
+    except Exception:
+        return False
+
+
+def _node_label(item) -> str:
+    try:
+        content = item.locator(".el-tag__content, pre").first
+        if content.count():
+            text = (content.inner_text(timeout=80) or "").strip()
+            if text:
+                return text.split("\n")[0].strip()
+    except Exception:
+        pass
+    try:
+        return ((item.inner_text(timeout=80) or "").strip().split("\n") or [""])[0].strip()
+    except Exception:
+        return ""
+
+
+def _is_size_duplicate_chip(item, panel, name: str) -> bool:
+    """已选芯片和隐藏 sizeTag 同文案时，不能点芯片。颜色没有 sizeTag，芯片就是选项。"""
+    try:
+        cls = (item.get_attribute("class") or "").split()
+    except Exception:
+        return False
+    if "is-closable" not in cls:
+        return False
+    try:
+        if item.evaluate("el => !!el.closest('.sizeTag')"):
+            return False
+    except Exception:
+        pass
+    loc = panel.locator(".sizeTag .el-tag")
+    try:
+        total = loc.count()
+    except Exception:
+        return False
+    for index in range(total):
+        if _node_label(loc.nth(index)) == name:
+            return True
+    return False
+
+
+def _click_visible_named(loc, name: str, timeout_ms: int, *, panel=None) -> bool:
+    try:
+        total = loc.count()
+    except Exception:
+        return False
+    for index in range(total):
+        item = loc.nth(index)
+        try:
+            if not item.is_visible():
+                continue
+            if _node_label(item) != name:
+                continue
+            if panel is not None and _is_size_duplicate_chip(item, panel, name):
+                continue
+            item.scroll_into_view_if_needed(timeout=800)
+            item.click(timeout=min(2_000, timeout_ms))
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def pick_panel_choice(page: Page, name: str, *, kind: str = "tag", timeout_ms: int = 5_000) -> str | None:
+    """尺码/色板/Tab 面板：只点当前看得见的项。当前 tab 没有就切过去再点。
+
+    不能用 get_by_text().first：隐藏 pane 里的「S」排在 DOM 前面时，
+    回放会点到未激活的标签，步骤显示通过，字段却仍是空的。
+    """
+    if not name:
+        return None
+    panel = _visible_dropdown_panel(page)
+    if panel is None:
+        return None
+    tabs = panel.locator(_PANEL_TAB_HOST)
+    if kind == "tab":
+        if _js_panel_click(panel, name, "tab") or _click_visible_named(tabs, name, timeout_ms):
+            try:
+                page.wait_for_timeout(200)
+            except Exception:
+                pass
+            return name
+        return None
+    if _js_panel_click(panel, name, "tag"):
+        return name
+    if _click_visible_named(panel.locator(_PANEL_SIZE_TAG), name, timeout_ms):
+        return name
+    if _click_visible_named(panel.locator(_PANEL_OPTION_TAG), name, timeout_ms, panel=panel):
+        return name
+    if _js_panel_click(panel, name, "tab") or _click_visible_named(tabs, name, timeout_ms):
+        try:
+            page.wait_for_timeout(200)
+        except Exception:
+            pass
+        return name
+    try:
+        tab_count = tabs.count()
+    except Exception:
+        tab_count = 0
+    for index in range(tab_count):
+        tab = tabs.nth(index)
+        try:
+            if not tab.is_visible():
+                continue
+            cls = (tab.get_attribute("class") or "").split()
+            if "is-active" in cls:
+                continue
+            tab.click(timeout=min(2_000, timeout_ms))
+            page.wait_for_timeout(200)
+        except Exception:
+            continue
+        if _js_panel_click(panel, name, "tag"):
+            return name
+        if _click_visible_named(panel.locator(_PANEL_SIZE_TAG), name, timeout_ms):
+            return name
+        if _click_visible_named(panel.locator(_PANEL_OPTION_TAG), name, timeout_ms, panel=panel):
+            return name
+    return None
+
+
 def pick_dropdown_option(page: Page, name: str, timeout_ms: int = 8_000) -> str | None:
     """在已打开的 Ant / Element 下拉里选出一项。
 

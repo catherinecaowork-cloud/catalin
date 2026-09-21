@@ -20,6 +20,12 @@ def click_sidebar_menu(page: Page, name: str, timeout_ms: int) -> bool:
     title = page.locator(SIDEBAR_SUBMENU_TITLE).filter(
         has=page.locator(f'span[title="{name}"]')
     )
+    # 起始页「有个 button」不等于侧栏已经渲染。先等到父级或叶子挂上。
+    try:
+        title.or_(item).first.wait_for(state="attached", timeout=timeout_ms)
+    except PlaywrightTimeout:
+        return False
+
     has_item = item.count() > 0
     has_title = title.count() > 0
     if not has_item and not has_title:

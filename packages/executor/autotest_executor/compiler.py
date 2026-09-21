@@ -798,6 +798,26 @@ def _click_in_panel(event: dict[str, Any]) -> bool:
     return scope.get("kind") == "dropdown" or bool(target.get("panel"))
 
 
+def _panel_option_text(event: dict[str, Any]) -> str | None:
+    """下拉里点的是选项值，不能用旁边的分组名/字段名当步骤标题。"""
+    if not _click_in_panel(event):
+        return None
+    text = str(event.get("text") or "").strip()
+    if text and text.lower() not in _ICON_CLICK_NAMES and text not in _NOISE_CLICK_TEXT:
+        if text.lower() == "plus":
+            return "加号"
+        modal = _modal_scope_name(event)
+        if not (modal and text == modal):
+            return text
+    for candidate in (event.get("target") or {}).get("candidates") or []:
+        if candidate.get("kind") != "text":
+            continue
+        value = str(candidate.get("value") or "").strip()
+        if value and value.lower() not in _ICON_CLICK_NAMES and value not in _NOISE_CLICK_TEXT:
+            return "加号" if value.lower() == "plus" else value
+    return None
+
+
 def _click_name(event: dict[str, Any]) -> str:
     placeholder = _placeholder_click_label(event)
     if placeholder:
@@ -809,6 +829,9 @@ def _click_name(event: dict[str, Any]) -> str:
         labeled = _matrix_label(candidate)
         if labeled:
             return labeled
+    panel_name = _panel_option_text(event)
+    if panel_name:
+        return panel_name
     values = " ".join(str(c.get("value") or "") for c in candidates)
     text = str(event.get("text") or "").strip()
 

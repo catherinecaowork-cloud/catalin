@@ -3,15 +3,16 @@ import { useMemo, useState } from "react";
 
 import { useHistoryContext } from "../../context/HistoryContext";
 import { useRunContext } from "../../context/RunContext";
-import type { Flow } from "../../types";
+import type { Flow, Suite } from "../../types";
 import { flowListSub, isConfirmedFlow } from "../../utils/flow";
 import { ConfirmModal } from "../patterns/ConfirmModal";
 import { FlowExplorerContextMenu } from "../patterns/FlowExplorerContextMenu";
 import { FlowSetupModal } from "../patterns/FlowSetupModal";
 import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
+import { PromptModal } from "../patterns/PromptModal";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { Sidebar, SidebarBody, SidebarFoot } from "../layout/Sidebar";
-import { Checkbox, EmptyState, Muted } from "../ui";
+import { EmptyState } from "../ui";
 import { DeleteFlowModal } from "../run/DeleteFlowModal";
 import { ImportFlowsModal } from "../run/ImportFlowsModal";
 import { RunSidebarFootActions } from "../run/RunSidebar";
@@ -34,16 +35,18 @@ export function ExplorerSidebar({
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Flow | null>(null);
   const [filter, setFilter] = useState("");
-  const [contextMenu, setContextMenu] = useState<{ flow: Flow; x: number; y: number } | null>(
-    null,
-  );
+  const [contextMenu, setContextMenu] = useState<
+    | { kind: "flow"; flow: Flow; x: number; y: number }
+    | { kind: "suite"; suite: Suite; x: number; y: number }
+    | null
+  >(null);
   const [setupModalFlow, setSetupModalFlow] = useState<Flow | null>(null);
+  const [renameTarget, setRenameTarget] = useState<
+    { kind: "flow"; flow: Flow } | { kind: "suite"; suite: Suite } | null
+  >(null);
   const { ask, confirmProps } = useConfirmDialog();
 
   const picked = history.selected.size;
-  const deletable = history.runs.filter((run) => !history.isBusy(run));
-  const allChecked =
-    deletable.length > 0 && deletable.every((run) => history.selected.has(run.id));
 
   const nodes = useMemo((): ExplorerNode[] => {
     const flowNodes: ExplorerNode[] = ctx.flows.map((flow) => ({
@@ -61,9 +64,7 @@ export function ExplorerSidebar({
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => ctx.togglePick(flow.id, event.target.checked)}
         />
-      ) : (
-        <span className="pick" />
-      ),
+      ) : undefined,
       onSelect: () => {
         ctx.setSelectedFlowId(flow.id);
         ctx.onLog(`选中流程 ${flow.name}`);
@@ -71,10 +72,8 @@ export function ExplorerSidebar({
       },
       onContextMenu: (event) => {
         ctx.setSelectedFlowId(flow.id);
-        setContextMenu({ flow, x: event.clientX, y: event.clientY });
+        setContextMenu({ kind: "flow", flow, x: event.clientX, y: event.clientY });
       },
-      onDelete: flow.status === "draft" ? () => setDeleteTarget(flow) : undefined,
-      deleteTitle: "删除草稿",
     }));
 
     const suiteNodes: ExplorerNode[] = ctx.suites.map((suite) => ({
@@ -88,14 +87,10 @@ export function ExplorerSidebar({
         ctx.selectSuite(suite.id);
         onOpenRunModule();
       },
-      onDelete: () =>
-        ask({
-          title: "删除套件",
-          message: `删除套件「${suite.name}」？用例本身不会删。`,
-          variant: "danger",
-          onConfirm: () => ctx.deleteSuite(suite.id),
-        }),
-      deleteTitle: "删除套件",
+      onContextMenu: (event) => {
+        ctx.selectSuite(suite.id);
+        setContextMenu({ kind: "suite", suite, x: event.clientX, y: event.clientY });
+      },
     }));
 
     const runNodes: ExplorerNode[] = history.runs.map((run) => {
@@ -108,32 +103,36 @@ export function ExplorerSidebar({
         label: `${history.kindText(run.kind)} · ${history.statusText(run.status)}`,
         sub: `${time} ${dur}`.trim(),
         markColor: "var(--c-history)",
+        selected: history.selected.has(run.id),
         disabled: busy,
-        pick: (
-          <input
-            type="checkbox"
-            className="pick"
-            disabled={busy}
-            checked={history.selected.has(run.id)}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => history.togglePick(run.id, event.target.checked)}
-          />
-        ),
-        onSelect: () => onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`, false),
+        onSelect: (event) => {
+          const additive = Boolean(event?.ctrlKey || event?.metaKey);
+          const range = Boolean(event?.shiftKey);
+          history.selectRun(run.id, { additive, range });
+          if (!additive && !range) {
+            onOpenRun(run.id, `运行 ${run.id.slice(0, 8)}`, false);
+          }
+        },
       };
     });
 
     return [
       { id: "folder-flows", kind: "folder", label: "测试用例", children: flowNodes },
       { id: "folder-suites", kind: "folder", label: "套件", children: suiteNodes },
-      { id: "folder-runs", kind: "folder", label: "运行记录", children: runNodes },
+      {
+        id: "folder-runs",
+        kind: "folder",
+        label: "运行记录",
+        sub: picked ? `${runNodes.length} · 已选 ${picked}` : String(runNodes.length),
+        children: runNodes,
+      },
     ];
   }, [
-    ask,
     ctx,
     history,
     onOpenRun,
     onOpenRunModule,
+    picked,
   ]);
 
   const filterActions = (
@@ -165,7 +164,7 @@ export function ExplorerSidebar({
           className="explorer-icon-btn"
           title={
             picked === 0
-              ? "删除运行记录：请先在「运行记录」文件夹中勾选"
+              ? "删除运行记录：单击选中，Ctrl 单击加选，Shift 单击选区间，Ctrl+A 全选"
               : `删除所选运行记录（${picked} 条）`
           }
           aria-label="删除所选运行记录"
@@ -189,29 +188,15 @@ export function ExplorerSidebar({
             {!ctx.siteId ? (
               <EmptyState>先在顶栏选择或添加站点。</EmptyState>
             ) : (
-              <>
-                {history.runs.length > 0 ? (
-                  <Checkbox
-                    className="check hist-tools"
-                    label={
-                      <>
-                        全选记录
-                        <Muted>{picked ? `已选 ${picked}` : "未选"}</Muted>
-                      </>
-                    }
-                    checked={allChecked}
-                    onChange={(event) => history.toggleAll(event.target.checked)}
-                  />
-                ) : null}
-                <ExplorerTree
-                  nodes={nodes}
-                  filter={filter}
-                  onFilterChange={setFilter}
-                  filterPlaceholder="Enter text to search..."
-                  emptyMessage={ctx.loading ? "加载中…" : "没有匹配项"}
-                  filterActions={filterActions}
-                />
-              </>
+              <ExplorerTree
+                nodes={nodes}
+                filter={filter}
+                onFilterChange={setFilter}
+                filterPlaceholder="Enter text to search..."
+                emptyMessage={ctx.loading ? "加载中…" : "没有匹配项"}
+                filterActions={filterActions}
+                onSelectAll={history.selectAll}
+              />
             )}
           </SidebarBody>
         }
@@ -224,14 +209,61 @@ export function ExplorerSidebar({
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />
       <DeleteFlowModal flow={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <ConfirmModal {...confirmProps} />
-      {contextMenu ? (
+      {contextMenu?.kind === "flow" ? (
         <FlowExplorerContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          onRename={() => setRenameTarget({ kind: "flow", flow: contextMenu.flow })}
           onConfigureSetup={() => setSetupModalFlow(contextMenu.flow)}
+          onDelete={
+            contextMenu.flow.status === "draft"
+              ? () => setDeleteTarget(contextMenu.flow)
+              : undefined
+          }
+          deleteLabel="删除草稿"
           onClose={() => setContextMenu(null)}
         />
       ) : null}
+      {contextMenu?.kind === "suite" ? (
+        <FlowExplorerContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onRename={() => setRenameTarget({ kind: "suite", suite: contextMenu.suite })}
+          onDelete={() =>
+            ask({
+              title: "删除套件",
+              message: `删除套件「${contextMenu.suite.name}」？用例本身不会删。`,
+              variant: "danger",
+              onConfirm: () => ctx.deleteSuite(contextMenu.suite.id),
+            })
+          }
+          deleteLabel="删除套件"
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      <PromptModal
+        open={renameTarget != null}
+        title="修改名称"
+        label="名称"
+        defaultValue={
+          renameTarget?.kind === "flow"
+            ? renameTarget.flow.name
+            : renameTarget?.kind === "suite"
+              ? renameTarget.suite.name
+              : ""
+        }
+        confirmLabel="保存"
+        onCancel={() => setRenameTarget(null)}
+        onConfirm={async (name) => {
+          if (!renameTarget) return;
+          if (renameTarget.kind === "flow") {
+            await ctx.renameFlow(renameTarget.flow, name);
+          } else {
+            await ctx.renameSuite(renameTarget.suite, name);
+          }
+          setRenameTarget(null);
+        }}
+      />
       <FlowSetupModal flow={setupModalFlow} onClose={() => setSetupModalFlow(null)} />
     </>
   );

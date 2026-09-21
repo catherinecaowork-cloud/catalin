@@ -101,6 +101,7 @@ from autotest_control.schemas import (
     FlowOut,
     FlowSetupUpdate,
     FlowStatusUpdate,
+    FlowUpdate,
     HealTaskOut,
     HeartbeatIn,
     InspectIn,
@@ -199,6 +200,27 @@ def import_flows(
 
 
 
+
+
+@router.patch("/flows/{flow_id}", response_model=FlowOut)
+def update_flow(
+    flow_id: str,
+    payload: FlowUpdate,
+    scope: Scope = Depends(get_scope),
+    session: Session = Depends(get_session),
+) -> FlowOut:
+    flow = get_flow(session, scope, flow_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请填写名称")
+    clash = session.scalars(
+        select(Flow).where(Flow.site_id == flow.site_id, Flow.name == name, Flow.id != flow.id)
+    ).first()
+    if clash is not None:
+        raise HTTPException(status_code=409, detail=f"当前环境已有「{name}」")
+    flow.name = name
+    session.commit()
+    return flow_out(flow)
 
 
 @router.delete("/flows/{flow_id}")

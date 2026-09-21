@@ -28,7 +28,6 @@ from autotest_adapters.oinone.selectors import (
     MODAL_TITLE_VISIBLE,
     MODAL_VISIBLE,
     OVERLAY_WAIT_VISIBLE,
-    SPINNER_VISIBLE,
     DATE_PICKER_WIDGETS,
     is_select_trigger_css,
     looks_like_dropdown_option,
@@ -47,11 +46,12 @@ from autotest_executor.browser.locator import (
     pick_ant_date,
     pick_ant_picker_value,
     pick_any_panel_choice,
+    pick_panel_choice,
     resolve_target,
     visible_dropdown_panel,
     wait_target_hidden,
 )
-from autotest_executor.browser.readiness import wait_for_app_ready
+from autotest_executor.browser.readiness import wait_for_app_ready, wait_for_route_idle
 from autotest_executor.browser.session import BrowserSession
 from autotest_executor.uploads import resolve_upload_file
 from autotest_protocol import Step
@@ -389,6 +389,7 @@ class ActionRunner:
         self.session.page.goto(target_url, timeout=step.timeout_ms, wait_until="domcontentloaded")
         # 单页应用在 DOM 就绪后还要渲染一段时间，不等会间歇性找不到元素
         ready = wait_for_app_ready(self.session.page, timeout_ms=step.timeout_ms)
+        wait_for_route_idle(self.session.page, timeout_ms=min(8_000, step.timeout_ms))
         return StepOutcome(
             step.id,
             step.action,
@@ -402,6 +403,26 @@ class ActionRunner:
         if date_outcome is not None:
             return date_outcome
         self._ensure_panel_open(step)
+        panel_kind = panel_choice_kind(step)
+        panel_name = self._panel_choice_name(step)
+        if panel_kind in {"tag", "tab"} and panel_name:
+            picked = pick_panel_choice(
+                self.session.page,
+                panel_name,
+                kind=panel_kind,
+                timeout_ms=min(5_000, step.timeout_ms),
+            )
+            if picked:
+                return StepOutcome(
+                    step.id,
+                    step.action,
+                    "passed",
+                    data={"matched": f"panel-{panel_kind}[{picked}]", "mode": "panel_choice"},
+                )
+            miss = f"面板里找不到「{panel_name}」"
+            if self._should_skip_optional(step, empty_choice=True):
+                return self._skip_optional(step, miss)
+            return StepOutcome(step.id, step.action, "failed", miss)
         option_name = self._dropdown_option_name(step)
         if option_name:
             picked = pick_dropdown_option(self.session.page, option_name, step.timeout_ms)
@@ -454,6 +475,20 @@ class ActionRunner:
         else:
             self._settle_after_navigation()
         return self._with_drift(step, resolution, data={"matched": resolution.candidate.describe()})
+
+    def _panel_choice_name(self, step: Step) -> str | None:
+        target = step.target
+        if target is not None:
+            for cand in target.ordered():
+                if cand.kind == "text" and cand.value:
+                    return cand.value
+                if cand.kind == "role" and cand.name:
+                    return cand.name
+        label = step.label or ""
+        marker = "点击「"
+        if marker in label:
+            return label.split(marker, 1)[1].split("」", 1)[0]
+        return None
 
     def _dropdown_option_name(self, step: Step) -> str | None:
         target = step.target
@@ -636,7 +671,9 @@ class ActionRunner:
             self._remember_trigger(step)
             page.wait_for_timeout(250)
             try:
-                page.locator(DROPDOWN_POPPER_VISIBLE).last.wait_for(state="visible", timeout=min(3_000, step.timeout_ms))
+                page.locator(DROPDOWN_POPPER_VISIBLE).last.wait_for(
+                    state="visible", timeout=min(3_000, step.timeout_ms)
+                )
             except Exception:
                 pass
         else:
@@ -1106,15 +1143,12 @@ class ActionRunner:
         return StepOutcome(step.id, step.action, "passed", data={"name": step.value or step.id})
 
     def _settle_after_navigation(self) -> None:
-        """点菜单后 SPA 还要渲染列表，立刻找「新增」会扑空。"""
-        page = self.session.page
-        spin = page.locator(SPINNER_VISIBLE)
-        try:
-            if spin.count():
-                spin.first.wait_for(state="hidden", timeout=8_000)
-        except Exception:
-            pass
-        wait_for_app_ready(page, timeout_ms=1_500)
+        """点菜单后 SPA 还要渲染列表，立刻找「新增」会扑空。
+
+        只等盖住内容的遮罩（最多 8 秒）。角落里一直转的小 spinner 不等。
+        """
+        wait_for_route_idle(self.session.page, timeout_ms=8_000)
+        wait_for_app_ready(self.session.page, timeout_ms=1_500)
 
     def _remember_trigger(self, step: Step) -> None:
         target = step.target

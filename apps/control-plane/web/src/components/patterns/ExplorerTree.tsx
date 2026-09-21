@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, FileText, Folder, Layers, PlayCircle, Search } from "lucide-react";
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 
-import { cn, EmptyState, IconButton } from "../ui";
+import { cn, EmptyState } from "../ui";
 
 export type ExplorerNodeKind = "folder" | "flow" | "suite" | "run" | "draft" | "site";
 
@@ -13,10 +13,8 @@ export type ExplorerNode = {
   children?: ExplorerNode[];
   selected?: boolean;
   pick?: ReactNode;
-  onSelect?: () => void;
+  onSelect?: (event?: MouseEvent) => void;
   onContextMenu?: (event: MouseEvent) => void;
-  onDelete?: () => void;
-  deleteTitle?: string;
   markColor?: string;
   disabled?: boolean;
 };
@@ -29,6 +27,7 @@ type Props = {
   emptyMessage?: string;
   showFilter?: boolean;
   filterActions?: ReactNode;
+  onSelectAll?: () => void;
 };
 
 function matchesFilter(node: ExplorerNode, filter: string): boolean {
@@ -97,7 +96,14 @@ function TreeLeaf({ node, depth }: { node: ExplorerNode; depth: number }) {
         node.disabled && "disabled",
       )}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
-      onClick={node.disabled ? undefined : node.onSelect}
+      onClick={
+        node.disabled
+          ? undefined
+          : (event) => {
+              if (event.shiftKey) event.preventDefault();
+              node.onSelect?.(event);
+            }
+      }
       onContextMenu={
         node.onContextMenu
           ? (event) => {
@@ -110,23 +116,11 @@ function TreeLeaf({ node, depth }: { node: ExplorerNode; depth: number }) {
       role={node.onSelect ? "button" : undefined}
       tabIndex={node.onSelect && !node.disabled ? 0 : undefined}
     >
-      {node.pick ?? <span className="pick" />}
+      {node.pick}
       <NodeIcon kind={node.kind} />
       {node.markColor ? <span className="mark" style={{ background: node.markColor }} /> : null}
       <span className="name">{node.label}</span>
       {node.sub ? <span className="sub">{node.sub}</span> : null}
-      {node.onDelete ? (
-        <IconButton
-          variant="del"
-          title={node.deleteTitle ?? "删除"}
-          onClick={(event) => {
-            event.stopPropagation();
-            node.onDelete?.();
-          }}
-        >
-          ×
-        </IconButton>
-      ) : null}
     </div>
   );
 }
@@ -147,13 +141,21 @@ function TreeBranch({
     const count = node.children.length;
     return (
       <div className="tree-folder">
-        <button
-          type="button"
+        <div
           className="tree-node tree-folder-head"
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           onClick={() => onToggle(node.id)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onToggle(node.id);
+            }
+          }}
+          role="button"
+          tabIndex={0}
           aria-expanded={expanded}
         >
+          {node.pick}
           {expanded ? (
             <ChevronDown className="tree-chevron" size={12} strokeWidth={2} aria-hidden />
           ) : (
@@ -161,8 +163,8 @@ function TreeBranch({
           )}
           <NodeIcon kind="folder" />
           <span className="name">{node.label}</span>
-          <span className="sub">{count}</span>
-        </button>
+          <span className="sub">{node.sub ?? count}</span>
+        </div>
         {expanded ? (
           <div className="tree-children">
             {node.children.map((child) => (
@@ -191,6 +193,7 @@ export function ExplorerTree({
   emptyMessage = "没有匹配项",
   showFilter = true,
   filterActions,
+  onSelectAll,
 }: Props) {
   const filtered = useMemo(() => filterExplorerNodes(nodes, filter), [nodes, filter]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => defaultExpandedIds(nodes));
@@ -213,7 +216,17 @@ export function ExplorerTree({
   };
 
   return (
-    <div className="explorer-tree">
+    <div
+      className="explorer-tree"
+      tabIndex={onSelectAll ? 0 : undefined}
+      onKeyDown={(event) => {
+        if (!onSelectAll) return;
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+          event.preventDefault();
+          onSelectAll();
+        }
+      }}
+    >
       {showFilter ? (
         <div className="explorer-filter">
           <Search className="explorer-filter-icon" size={13} strokeWidth={2} aria-hidden />

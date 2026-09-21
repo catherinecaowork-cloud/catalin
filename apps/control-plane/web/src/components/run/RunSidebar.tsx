@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 
 import { useRunContext } from "../../context/RunContext";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
-import type { Flow } from "../../types";
+import type { Flow, Suite } from "../../types";
 import { flowListSub, flowStatusText, isConfirmedFlow } from "../../utils/flow";
 import { ConfirmModal } from "../patterns/ConfirmModal";
 import { FlowExplorerContextMenu } from "../patterns/FlowExplorerContextMenu";
@@ -19,10 +19,15 @@ export function RunSidebar() {
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Flow | null>(null);
   const [filter, setFilter] = useState("");
-  const [contextMenu, setContextMenu] = useState<{ flow: Flow; x: number; y: number } | null>(
-    null,
-  );
+  const [contextMenu, setContextMenu] = useState<
+    | { kind: "flow"; flow: Flow; x: number; y: number }
+    | { kind: "suite"; suite: Suite; x: number; y: number }
+    | null
+  >(null);
   const [setupModalFlow, setSetupModalFlow] = useState<Flow | null>(null);
+  const [renameTarget, setRenameTarget] = useState<
+    { kind: "flow"; flow: Flow } | { kind: "suite"; suite: Suite } | null
+  >(null);
   const { ask, confirmProps } = useConfirmDialog();
 
   const nodes = useMemo((): ExplorerNode[] => {
@@ -41,19 +46,15 @@ export function RunSidebar() {
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => ctx.togglePick(flow.id, event.target.checked)}
         />
-      ) : (
-        <span className="pick" />
-      ),
+      ) : undefined,
       onSelect: () => {
         ctx.setSelectedFlowId(flow.id);
         ctx.onLog(`选中流程 ${flow.name}`);
       },
       onContextMenu: (event) => {
         ctx.setSelectedFlowId(flow.id);
-        setContextMenu({ flow, x: event.clientX, y: event.clientY });
+        setContextMenu({ kind: "flow", flow, x: event.clientX, y: event.clientY });
       },
-      onDelete: flow.status === "draft" ? () => setDeleteTarget(flow) : undefined,
-      deleteTitle: "删除草稿",
     }));
 
     const suiteNodes: ExplorerNode[] = ctx.suites.map((suite) => ({
@@ -64,14 +65,10 @@ export function RunSidebar() {
       selected: ctx.selectedSuiteId === suite.id,
       markColor: "var(--c-record)",
       onSelect: () => ctx.selectSuite(suite.id),
-      onDelete: () =>
-        ask({
-          title: "删除套件",
-          message: `删除套件「${suite.name}」？用例本身不会删。`,
-          variant: "danger",
-          onConfirm: () => ctx.deleteSuite(suite.id),
-        }),
-      deleteTitle: "删除套件",
+      onContextMenu: (event) => {
+        ctx.selectSuite(suite.id);
+        setContextMenu({ kind: "suite", suite, x: event.clientX, y: event.clientY });
+      },
     }));
 
     const tree: ExplorerNode[] = [];
@@ -83,7 +80,6 @@ export function RunSidebar() {
     }
     return tree;
   }, [
-    ask,
     ctx.flows,
     ctx.flows.length,
     ctx.loading,
@@ -95,7 +91,6 @@ export function RunSidebar() {
     ctx.suites,
     ctx.suites.length,
     ctx.selectSuite,
-    ctx.deleteSuite,
     ctx.togglePick,
   ]);
 
@@ -149,14 +144,61 @@ export function RunSidebar() {
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />
       <DeleteFlowModal flow={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <ConfirmModal {...confirmProps} />
-      {contextMenu ? (
+      {contextMenu?.kind === "flow" ? (
         <FlowExplorerContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          onRename={() => setRenameTarget({ kind: "flow", flow: contextMenu.flow })}
           onConfigureSetup={() => setSetupModalFlow(contextMenu.flow)}
+          onDelete={
+            contextMenu.flow.status === "draft"
+              ? () => setDeleteTarget(contextMenu.flow)
+              : undefined
+          }
+          deleteLabel="删除草稿"
           onClose={() => setContextMenu(null)}
         />
       ) : null}
+      {contextMenu?.kind === "suite" ? (
+        <FlowExplorerContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onRename={() => setRenameTarget({ kind: "suite", suite: contextMenu.suite })}
+          onDelete={() =>
+            ask({
+              title: "删除套件",
+              message: `删除套件「${contextMenu.suite.name}」？用例本身不会删。`,
+              variant: "danger",
+              onConfirm: () => ctx.deleteSuite(contextMenu.suite.id),
+            })
+          }
+          deleteLabel="删除套件"
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      <PromptModal
+        open={renameTarget != null}
+        title="修改名称"
+        label="名称"
+        defaultValue={
+          renameTarget?.kind === "flow"
+            ? renameTarget.flow.name
+            : renameTarget?.kind === "suite"
+              ? renameTarget.suite.name
+              : ""
+        }
+        confirmLabel="保存"
+        onCancel={() => setRenameTarget(null)}
+        onConfirm={async (name) => {
+          if (!renameTarget) return;
+          if (renameTarget.kind === "flow") {
+            await ctx.renameFlow(renameTarget.flow, name);
+          } else {
+            await ctx.renameSuite(renameTarget.suite, name);
+          }
+          setRenameTarget(null);
+        }}
+      />
       <FlowSetupModal flow={setupModalFlow} onClose={() => setSetupModalFlow(null)} />
     </>
   );
