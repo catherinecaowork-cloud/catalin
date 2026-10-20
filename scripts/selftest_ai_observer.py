@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -18,7 +17,7 @@ from autotest_control.ai.schemas import CompileContract, StepEdit
 from autotest_control.deps import Scope
 from autotest_control.domain.observer import apply_snapshot_to_run, attach_model_to_flow, load_site_widget_models
 from autotest_control.models import Base, Flow, Run, Site
-from autotest_protocol import LayerRef, PageWidgetEntry, Step, Target, Candidate
+from autotest_protocol import Step, Target, Candidate
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 

@@ -25,18 +25,22 @@ export function objectFromLabel(label: string): string {
 export function parseStepDetail(data: Record<string, unknown>): {
   object?: string;
   input?: string;
+  failure?: string;
 } {
   const nested = data.data;
   const detail =
     nested && typeof nested === "object" ? (nested as Record<string, unknown>) : {};
   const matched = detail.matched ?? detail.matched_candidate;
   const value = detail.value ?? detail.expected ?? detail.actual ?? detail.wanted;
+  // 失败分类：实时事件在 data.data.failure，运行结论的步骤项在顶层 failure
+  const failure = detail.failure ?? data.failure;
   return {
     object: matched ? String(matched) : undefined,
     input:
       value !== undefined && value !== null && String(value) !== ""
         ? String(value)
         : undefined,
+    failure: failure ? String(failure) : undefined,
   };
 }
 

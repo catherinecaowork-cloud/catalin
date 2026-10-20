@@ -17,7 +17,12 @@ def pending_heal_for_run(session: Session, run_id: str) -> HealTask | None:
 
 
 def collect_heal_task(session: Session, run: Run, updates: Any) -> HealTask | None:
-    """监督者：把本轮定位漂移整理成一个脚本修补任务，不自动写回。"""
+    """监督者：把本轮定位漂移整理成一个脚本修补任务，不自动写回。
+
+    只认执行器写来的 `locator_updates`。环境原因（浮层没打开 / 被遮挡 / 超时）
+    在执行器侧就不写 updates——那条界线在 `LocatorMemory.remember` 里，
+    这里不做二次判断：凭空替它猜原因，只会再造一条删好候选的路径。
+    """
     if not run.flow_id or not isinstance(updates, list) or not updates:
         return None
     flow = session.get(Flow, run.flow_id)

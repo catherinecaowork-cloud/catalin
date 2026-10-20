@@ -86,6 +86,11 @@ def main() -> int:
     unchanged = build_locator_patches(new_steps, updates[1:])
     _assert(unchanged == [], "首选已经是命中候选时不再生成任务")
 
+    # 环境原因（浮层没打开 / 被遮挡 / 超时）在执行器侧就不写 locator_updates，
+    # 到监督者这里只剩空列表。这条钉住的是接缝：没有候选更新就不得造出修补任务。
+    _assert(build_locator_patches(flow_steps, []) == [], "没有候选更新时不生成修补任务")
+    _assert(build_locator_patches(flow_steps, [{"step_id": "s1"}]) == [], "残缺的更新项被跳过")
+
     for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
         os.environ.pop(name, None)
     with tempfile.TemporaryDirectory() as temp:

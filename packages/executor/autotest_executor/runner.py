@@ -13,7 +13,6 @@ from typing import Any
 from autotest_executor.auth import (
     UnsupportedLoginChallenge,
     build_material,
-    detect_login_challenge,
     form_login_steps,
 )
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
@@ -165,6 +164,11 @@ class RunExecutor:
                 "message": outcome.message,
                 "elapsed_ms": int(elapsed * 1000),
                 "drift": outcome.drift,
+                # 失败分类：没找到 / 找到但点不到 / 点了没生效。只写在 message 里
+                # 就没法按类聚合，报告只能一句「偶发失败」。
+                "failure": outcome.data.get("failure"),
+                "failure_kind": outcome.data.get("failure_kind"),
+                "environmental": outcome.data.get("environmental"),
             }
         )
         return outcome

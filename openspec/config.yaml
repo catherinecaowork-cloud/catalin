@@ -2,26 +2,44 @@ schema: spec-driven
 
 context: |
   项目：通用接口 / UI 自动化测试平台（autotest-platform）
-  定位：多租户 Web 控制面（FastAPI）+ 可部署执行器 Worker（Python + Playwright）。
+  定位：内网团队版。FastAPI 控制面 + 可部署执行器 Worker（Python + Playwright）+ React 控制台。
        用户接入任意站点（URL + 登录凭证），用确定性回放做日常回归，AI 只做探索 / 编译 / 审查。
+       不是 SaaS：不做多副本、不做对象存储、不做公网多租户与账号体系。
+       排期与理由以 docs/platform-restructure-plan.md 为准。
+
+  三个进程与红线（不要在 artifact 里重新讨论）：
+  - apps/control-plane：API / 派发 / SSE / 产物落盘。不装浏览器、不碰被测站点。
+  - packages/executor：Playwright Worker。不碰数据库，任务自带全部上下文。
+  - packages/protocol：步骤 DSL / 任务 / 事件模型的共同来源。
+  - 平台从不主动连 Worker：Worker 长轮询拉任务（被测系统多在内网 / NAT 后）。
+  - packages/adapters 只放厂商特例；通用件（Ant Design / Element UI）不得下沉进厂商目录。
 
   已拍板的技术决议（不要在 artifact 里重新讨论）：
-  - 浏览器驱动只用 Playwright，锁 1.49.1；不引入 browser-use（探索产物必须能被回放引擎执行）
-  - 控制面 FastAPI + Postgres + MinIO；P0 前端为静态页 + SSE，P1 才上 Vue 3
-  - Worker 长轮询拉任务，平台不反向连接（被测系统多在内网 / NAT 后）
-  - 部署为内网单机 Docker Compose；Windows 用 pip 装 Worker 跑开窗，容器 Worker 跑 CI 无头
-  - 任务队列用 Postgres 任务表 + FOR UPDATE SKIP LOCKED，P0 不引 Redis
-  - LLM 走公司统一网关，密钥进 credential 表；P0 不写任何 LLM 调用代码
-  - 平台不把 pytest 当执行内核；Allure 仅作可选导出
+  - 浏览器驱动只用 Playwright，锁 1.49.1。注意 locator.filter(visible=True) 需要 ≥1.51，本仓库不可用；
+    判可见请用 count() + nth(i).is_visible()，或 Playwright 选择器引擎自带的 :visible。
+  - 持久化 SQLite（var/control.db），产物落本地磁盘（var/artifacts/）。
+    Postgres 推迟，触发条件见 docs/platform-restructure-plan.md §6.3。
+  - 控制台是 React SPA（apps/control-plane/web），不建 Vue 3。
+  - 多租户暂缓非取消：Scope 的 tenant_id / project_id 字段保留但恒为默认值，隔离规则未实现也未承诺。
+    触发条件见 docs/platform-restructure-plan.md §6.6。
+  - LLM 走公司统一网关，密钥进 credential 表；日常回归零模型调用。
+  - 平台不把 pytest 当执行内核；Allure 仅作可选导出。
 
-  P0 范围与红线：
-  - P0 只做 L1（接口重放）+ L2（Playwright 回放），零 LLM 调用
-  - Router / Explorer / Compiler / Reviewer 属于 P1，不在本 change 内
-  - Go/No-Go：P0 全部验收项须在 2 个真实非 MES 站点上跑通
+  产品原则：
+  - 日常回归零模型调用。AI 只在三处介入：首次探索、变更编译、失败复核。
+  - AI 产物必须自证可回放：编译产物强制回放验证，上限 MAX_COMPILE_ATTEMPTS = 3
+    （apps/control-plane/autotest_control/schemas.py）。
+  - 定位用候选列表按稳定性排序，数字越小越优先：
+    testid(0) → field / matrix(1) → role(2) → label(3) → placeholder(4) → text(5) → css(6)。
+    哈希 class 不是候选，是明确排除的做法。（packages/protocol/autotest_protocol/dsl.py）
+  - 低稳定性命中报为「定位漂移」，不静默接受：漂移汇总成一条待确认修补任务，
+    运行完成时不静默改写流程步骤。（openspec/specs/locator-heal/spec.md）
+  - 流程状态机 draft → reviewed → golden → active，只由人确认推进，无自动晋级。
+  - 自愈（P1.6）尚未实现。一旦实现，必须可审计、不得升基线。
+  - 明确不支持：验证码、SSO、iframe 内元素。
 
-  上下文来源：D:\project\mes-test-platform\docs\autotest-platform-feasibility.md（形态与可行性）
-              D:\project\mes-test-platform\docs\autotest-platform-tech-design.md（技术方案）
-  MES 现仓库（mes-test-platform）不动，仅作为 adapters/oinone 的素材来源与第一个内部客户。
+  真实验收站点：MES 家族（杰克 / 樱井 / 福瑞丝 http://192.168.99.165:8000）。
+  MES 现仓库（D:\project\mes-test-platform）不动，仅作为 adapters/oinone 的素材来源与第一个内部客户。
 
   语言约定：文档与规格描述使用简体中文；WHEN / THEN / SHALL 等规格关键词保留英文。
 
@@ -33,5 +51,5 @@ rules:
     - 每条 Requirement 必须是可验收的外部行为，不写实现步骤
     - 场景要能落成自动化验收，避免「应该更稳定」这类不可判定描述
   tasks:
-    - 任务按技术方案 §9 的 9 步施工顺序组织，每步都带验收标准
-    - 不引入 P1 的 AI 相关任务
+    - 按本 change 自己的施工顺序组织，每步带验收标准；零行为变化的整理排在行为改动之前
+    - 跨期排期以 docs/platform-restructure-plan.md 为准，不在 change 内重排

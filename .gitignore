@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.ruff_cache/
 
 # 本地运行数据：数据库、产物、密钥
 var/

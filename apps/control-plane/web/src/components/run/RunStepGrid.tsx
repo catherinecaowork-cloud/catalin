@@ -13,6 +13,17 @@ type Props = {
   onOpenStepShot?: (stepId: string) => void;
 };
 
+/** 失败分类的中文名。三类混成一句「偶发失败」，运维就不知道该改脚本还是看环境。 */
+const FAILURE_LABELS: Record<string, string> = {
+  not_found: "没找到",
+  not_actionable: "找到但点不到",
+  no_effect: "点了没生效",
+};
+
+function failureLabel(failure?: string): string | undefined {
+  return failure ? (FAILURE_LABELS[failure] ?? failure) : undefined;
+}
+
 export function RunStepGrid({
   steps,
   variant = "full",
@@ -78,6 +89,9 @@ export function RunStepGrid({
                     <td className="col-desc">
                       <div className="cell-main">{step.label}</div>
                       {step.message ? <div className="msg">{step.message}</div> : null}
+                      {failureLabel(step.failure) ? (
+                        <div className="failure">{failureLabel(step.failure)}</div>
+                      ) : null}
                       {step.drift ? <div className="drift">{step.drift}</div> : null}
                     </td>
                     <td className="col-item mono">{step.action}</td>
@@ -96,6 +110,9 @@ export function RunStepGrid({
                     <td className="col-desc">
                       <div className="cell-main">{step.label}</div>
                       {step.message ? <div className="msg">{step.message}</div> : null}
+                      {failureLabel(step.failure) ? (
+                        <div className="failure">{failureLabel(step.failure)}</div>
+                      ) : null}
                       {step.drift ? <div className="drift">{step.drift}</div> : null}
                     </td>
                   </>

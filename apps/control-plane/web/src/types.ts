@@ -78,6 +78,8 @@ export type RunStep = {
   status: string;
   message?: string;
   drift?: string;
+  /** 失败分类：not_found / not_actionable / no_effect */
+  failure?: string;
   elapsed?: number;
   screenshot?: string;
   /** 命中的定位候选摘要，如 label=PO单号 */

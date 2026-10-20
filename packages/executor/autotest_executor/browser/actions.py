@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin
@@ -15,7 +16,6 @@ from autotest_adapters.oinone.selectors import (
     COMBOBOX_ANCESTOR_JS,
     CLICKABLE_ANCESTOR_XPATH,
     DROPDOWN_MIXED_VISIBLE,
-    DROPDOWN_POPPER_VISIBLE,
     DROPDOWN_SCROLL_HOLDER,
     DROPDOWN_WIDGETS,
     CLICKABLE_VISIBLE,
@@ -35,7 +35,10 @@ from autotest_adapters.oinone.selectors import (
     panel_visible_selectors,
 )
 from autotest_executor.browser.locator import (
+    ENVIRONMENTAL_KINDS,
+    FailureKind,
     LocatorMemory,
+    LocatorResolution,
     TargetNotFound,
     TargetStillVisible,
     click_ant_sidebar_menu,
@@ -43,18 +46,71 @@ from autotest_executor.browser.locator import (
     pick_first_dropdown_option,
     locator_is_readonly_picker,
     parse_picker_value,
-    pick_ant_date,
     pick_ant_picker_value,
     pick_any_panel_choice,
     pick_panel_choice,
     resolve_target,
     visible_dropdown_panel,
+    wait_any_dropdown_panel,
     wait_target_hidden,
+    wait_visible_dropdown_panel,
 )
 from autotest_executor.browser.readiness import wait_for_app_ready, wait_for_route_idle
 from autotest_executor.browser.session import BrowserSession
 from autotest_executor.uploads import resolve_upload_file
 from autotest_protocol import Step
+from autotest_protocol.dsl import candidate_key
+
+
+def _remaining_ms(deadline: float) -> int:
+    """离总预算还剩多少毫秒。给 0 表示已经用完，调用方必须收手。"""
+    return max(0, int((deadline - time.monotonic()) * 1000))
+
+
+# 给后续候选留的点击底。首选被遮挡时空等会把总预算耗光，回退就没机会跑。
+# 1000ms 对「元素正常、只是页面慢」远远够用，只有真点不动时才会用满。
+_CLICK_RESERVE_MS = 1_000
+
+# 点击后等下拉展开的确认预算。沿用原来 `_wait_dropdown` 的 1500ms——
+# 这是「动画 + 数据拉取」的常见量级，不是新拍的数。
+_DROPDOWN_CONFIRM_MS = 1_500
+
+
+def _click_slice_ms(remaining: int, candidates_left: int) -> int:
+    """当前候选能用的点击预算。
+
+    首选拿大头——它是正常情况下该命中的那个，不能因为要多试几个候选就缩短它的
+    正常等待。但要给剩下的候选留一份底，否则首选被遮挡时空等会把总预算耗光，
+    回退根本没机会跑（这正是第 3 节要修的那条路）。
+    """
+    if candidates_left <= 1:
+        return remaining
+    reserve = min(remaining // 2, _CLICK_RESERVE_MS * (candidates_left - 1))
+    return max(1, remaining - reserve)
+
+
+# 失败分类：运行结论里必须能区分这三类。混成一句「偶发失败」等于没报——
+# 运维分不清该去改脚本，还是该去看环境。
+# 「没找到」在下面 _do_* 解析失败处用；另两类由点击回退与生效确认补齐。
+FAILURE_NOT_FOUND = "not_found"
+FAILURE_NOT_ACTIONABLE = "not_actionable"
+FAILURE_NO_EFFECT = "no_effect"
+
+class ClickNotActionable(Exception):
+    """候选都找到了，但一个都点不动。
+
+    与「没找到」是两类失败：前者要去看遮挡/动画/权限，后者才要去看脚本里的候选。
+    混成同一句，运维会去改本来没问题的候选。
+    """
+
+    def __init__(self, tried: list[str], cause: Exception) -> None:
+        # Playwright 的 click 报错带整段 call log（几十行）。只取首行——
+        # 那段日志会经 step_results 进运行结论，灌进去没人看得完。详情留在 cause 里。
+        first_line = next((line for line in str(cause).splitlines() if line.strip()), "")
+        detail = first_line.strip() or type(cause).__name__
+        super().__init__(f"找到但点不到（{detail}）")
+        self.tried = tried
+        self.cause = cause
 
 # Vue / React 这类框架监听的是 input 事件，直接改 value 不生效。
 # Playwright 的 fill 已经派发 input，这里补 change 与 blur，覆盖依赖失焦提交的表单。
@@ -320,15 +376,23 @@ class ActionRunner:
         self._last_trigger_css: str | None = None
         self._fallback_picked: set[str] = set()
 
-    def _resolve(self, step: Step, *, fill_value: str | None = None):
+    def _resolve(
+        self,
+        step: Step,
+        *,
+        fill_value: str | None = None,
+        timeout_ms: int | None = None,
+        skip: dict[str, str] | None = None,
+    ) -> LocatorResolution:
         assert step.target is not None
         return resolve_target(
             self.session.page,
             step.target,
-            step.timeout_ms,
+            step.timeout_ms if timeout_ms is None else timeout_ms,
             memory=self.locator_memory,
             step_id=step.id,
             fill_value=fill_value,
+            skip=skip,
         )
 
     def _try_pick_date(self, step: Step) -> StepOutcome | None:
@@ -366,6 +430,21 @@ class ActionRunner:
             return StepOutcome(step.id, step.action, "failed", f"不支持的动作：{step.action}")
         try:
             return handler(step)
+        except ClickNotActionable as exc:
+            if self._should_skip_optional(step):
+                return self._skip_optional(step, str(exc))
+            return StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                str(exc),
+                data={
+                    "tried": exc.tried,
+                    "failure": FAILURE_NOT_ACTIONABLE,
+                    "failure_kind": FailureKind.COVERED,
+                    "environmental": True,
+                },
+            )
         except TargetNotFound as exc:
             fallback = self._click_available_choice(step)
             if fallback:
@@ -375,7 +454,18 @@ class ActionRunner:
             if self._should_skip_optional(step):
                 return self._skip_optional(step, str(exc))
             return StepOutcome(
-                step.id, step.action, "failed", str(exc), data={"tried": exc.tried}
+                step.id,
+                step.action,
+                "failed",
+                str(exc),
+                data={
+                    "tried": exc.tried,
+                    "failure": FAILURE_NOT_FOUND,
+                    # 浮层没出现是环境原因，与「脚本里的候选真失效了」必须分开报：
+                    # 前者不该让人去改脚本，也不该生成修补任务
+                    "failure_kind": exc.kind,
+                    "environmental": exc.kind in ENVIRONMENTAL_KINDS,
+                },
             )
         except Exception as exc:  # noqa: BLE001 - 步骤级失败要变成结果，不能掀掉整次运行
             return StepOutcome(step.id, step.action, "failed", f"{type(exc).__name__}: {exc}")
@@ -463,18 +553,56 @@ class ActionRunner:
                         "passed",
                         data={"matched": f'menuitem[title="{name}"]', "menu": "sidebar"},
                     )
-        resolution = self._resolve(step)
-        self._click_locator(resolution.locator, step.timeout_ms)
+        # 点之前先看下拉是不是已经开着。已经开着时点触发器本来就会把它收起来，
+        # 「点完没有下拉」说明不了没生效——这道护栏也顺带挡住 _ensure_panel_open
+        # 刚把面板点开、紧接着又被 _click_candidate 点关的乱局。
+        dropdown_was_open = visible_dropdown_panel(self.session.page) is not None
+        resolution = self._click_candidate(step)
         self._remember_trigger(step)
         label = step.label or ""
         opens_overlay = scoped or any(word in label for word in ("新增", "新建", "添加"))
+        no_effect: str | None = None
         if self._click_opens_dropdown(step):
-            self._wait_dropdown()
+            no_effect = self._confirm_dropdown_opened(step, already_open=dropdown_was_open)
         elif opens_overlay:
             self._wait_overlay()
         else:
             self._settle_after_navigation()
+        if no_effect is not None:
+            return StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                no_effect,
+                data={
+                    "matched": resolution.candidate.describe(),
+                    "failure": FAILURE_NO_EFFECT,
+                    "failure_kind": FailureKind.TIMEOUT,
+                    "environmental": True,
+                },
+            )
         return self._with_drift(step, resolution, data={"matched": resolution.candidate.describe()})
+
+    def _confirm_dropdown_opened(self, step: Step, *, already_open: bool) -> str | None:
+        """点击「下拉触发器」后确认下拉真的展开了。返回 None 表示确认通过。
+
+        只在步骤**自己声明了后果**时才判失败：目标是 select / combobox 触发器，
+        点它的唯一目的就是展开下拉。没有这一条，「点了没生效」只能靠下游步骤
+        莫名其妙地失败来暴露——而那时的报错指向的是下游，排查方向是错的。
+
+        **不做**通用的「什么都没变就判失败」。点输入框取焦点、点表格行做选中、
+        点按钮弹一个我们不追踪的 toast，都是合法的不改 URL 不改可见性的点击。
+        凭空判失败会把好用例弄红，而没人会看天天红的报告——那比漏报更糟。
+        只有「步骤明确声明了该有什么后果」才够格当判据。
+        """
+        if already_open:
+            return None
+        if wait_any_dropdown_panel(self.session.page, min(_DROPDOWN_CONFIRM_MS, step.timeout_ms)):
+            return None
+        return (
+            "点了没生效：点击下拉触发器后没有出现下拉面板"
+            "（目标可能被遮挡、已禁用，或点击落到了别的元素上）"
+        )
 
     def _panel_choice_name(self, step: Step) -> str | None:
         target = step.target
@@ -512,8 +640,48 @@ class ActionRunner:
                     return rest.split('"', 1)[0]
         return None
 
+    def _click_candidate(self, step: Step) -> LocatorResolution:
+        """按候选顺序点到成功为止，总预算受 `step.timeout_ms` 约束。
+
+        只点一次就判失败是缺陷的一半：候选 A 点不到不代表候选 B 也不行。
+        但跳过的候选按环境原因（COVERED）记——点不到多半是遮挡或动画，不是 A 失效；
+        判成失效会在下一次把好候选从脚本里删掉（见 `LocatorMemory.remember`）。
+
+        预算是**总共一份**，不是每个候选一份：候选多的时候，逐个给满预算会把一次
+        点击拖成候选数 × timeout。但也不是平均分——见 `_click_slice_ms`。
+        """
+        assert step.target is not None
+        deadline = time.monotonic() + max(0, step.timeout_ms) / 1000
+        total = max(1, len(step.target.candidates))
+        skipped: dict[str, str] = {}
+        tried: list[str] = []
+        last_error: Exception | None = None
+        while True:
+            try:
+                resolution = self._resolve(step, timeout_ms=_remaining_ms(deadline), skip=skipped)
+            except TargetNotFound as exc:
+                if last_error is None:
+                    raise
+                # 候选都试过了：不是没找到，是找到了点不到
+                raise ClickNotActionable(exc.tried or tried, last_error) from exc
+            tried.append(resolution.candidate.describe())
+            try:
+                # 至少给 1ms：Playwright 的 timeout=0 表示「不限时」，会挂死
+                budget = _click_slice_ms(_remaining_ms(deadline), total - len(skipped))
+                self._click_locator(resolution.locator, budget)
+                return resolution
+            except Exception as exc:  # noqa: BLE001 - 换下一个候选，不能掀掉整次运行
+                last_error = exc
+                skipped[candidate_key(resolution.candidate)] = FailureKind.COVERED
+                if _remaining_ms(deadline) <= 0:
+                    raise ClickNotActionable(tried, last_error) from last_error
+
     def _click_locator(self, locator, timeout_ms: int) -> None:
-        """图标内部的 <use> 能被定位，但点击会被上层 svg 挡住。改点可点的祖先。"""
+        """图标内部的 <use> 能被定位，但点击会被上层 svg 挡住。改点可点的祖先。
+
+        点不动就抛。这里**不再**用 `force=True` 兜底——绕过遮挡检查的强制点击会
+        静默点到别的东西上还报通过，比失败更糟。逃生口留给步骤显式声明。
+        """
         try:
             in_select = locator.evaluate(COMBOBOX_ANCESTOR_JS)
         except Exception:
@@ -527,11 +695,7 @@ class ActionRunner:
             else:
                 clickable = locator.locator(CLICKABLE_ANCESTOR_XPATH)
                 target = clickable if clickable.count() else locator
-        try:
-            target.click(timeout=timeout_ms)
-            return
-        except Exception:
-            target.click(timeout=min(3_000, timeout_ms), force=True)
+        target.click(timeout=timeout_ms)
 
     def _do_fill(self, step: Step) -> StepOutcome:
         assert step.target is not None and step.value is not None
@@ -601,7 +765,12 @@ class ActionRunner:
                 step.action,
                 "failed",
                 f"填值后取回的值与期望不一致：期望 {step.value!r}，实际 {actual!r}（可能被前端格式化或未生效）",
-                data={"expected": step.value, "actual": actual},
+                data={
+                    "expected": step.value,
+                    "actual": actual,
+                    # 值取回来是别的：不是没找到、也不是点不到，是填了没生效
+                    "failure": FAILURE_NO_EFFECT,
+                },
             )
         return self._with_drift(step, resolution, data={"value": actual})
 
@@ -669,13 +838,9 @@ class ActionRunner:
         if visible_dropdown_panel(page) is None:
             resolution.locator.click(timeout=step.timeout_ms)
             self._remember_trigger(step)
-            page.wait_for_timeout(250)
-            try:
-                page.locator(DROPDOWN_POPPER_VISIBLE).last.wait_for(
-                    state="visible", timeout=min(3_000, step.timeout_ms)
-                )
-            except Exception:
-                pass
+            # 轮询到面板出现即可。原来是 wait_for_timeout(250) + wait_for(visible)：
+            # 那 250ms 是纯硬等，动画快时白等、慢时又不够。
+            wait_visible_dropdown_panel(page, min(3_000, step.timeout_ms))
         else:
             self._remember_trigger(step)
         mode = step.choose_mode
@@ -715,16 +880,60 @@ class ActionRunner:
         )
 
     def _skip_optional(self, step: Step, reason: str) -> StepOutcome:
+        dialogs_before = self._visible_dialog_count()
         self._dismiss_dropdown()
         field = field_name_from_label(step.label) or step.value or ""
         prefix = f"非必填「{field}」未选到，已跳过" if field else "非必填项未选到，已跳过"
+        if dialogs_before and not self._visible_dialog_count():
+            # 跳过本身无害，但收下拉把外层弹窗一起收掉了。后面每一步都只剩垃圾结果，
+            # 失败会被推迟几十步、还报成「浮层不存在」指错方向。就地判红。
+            return StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                f"{prefix}：收下拉时把外层弹窗一起关掉了（{reason}）",
+                data={
+                    "failure": FAILURE_NOT_FOUND,
+                    "failure_kind": FailureKind.OVERLAY_ABSENT,
+                    "environmental": True,
+                },
+            )
         return StepOutcome(step.id, step.action, "skipped", f"{prefix}：{reason}")
 
     def _dismiss_dropdown(self) -> None:
+        """收起可能开着的下拉面板。
+
+        **没开着的面板不要按 Escape**：Escape 会一路冒泡到弹窗上，把整个表单关掉。
+        141 的 Oinone 就是这么挂的——跳过一个非必填字段，后面 20 步全落空。
+
+        弹窗里开着面板时更不能按 Escape，同一个原因。改点触发器把面板收回去：
+        点一个开着的触发器本来就是收起，这是 Ant/Element 的常规行为（`_do_click`
+        里 `dropdown_was_open` 那段已经依赖这个行为）。触发器 css 没记住时宁可留一个
+        开着的面板——下一步点别的触发器会把它顶掉，而弹窗关了就再也回不来。
+        """
         page = self.session.page
+        if visible_dropdown_panel(page) is None:
+            return
+        if self._visible_dialog_count() > 0:
+            self._toggle_panel_closed()
+            return
         try:
             page.keyboard.press("Escape")
             page.wait_for_timeout(150)
+        except Exception:
+            pass
+
+    def _toggle_panel_closed(self) -> None:
+        """点开着的触发器把下拉收回去。没有记住触发器就什么都不做。"""
+        css = self._last_trigger_css
+        if not css:
+            return
+        try:
+            trigger = self.session.page.locator(css)
+            if trigger.count() == 0:
+                return
+            self._click_locator(trigger.last, 1_500)
+            self.session.page.wait_for_timeout(150)
         except Exception:
             pass
 
@@ -927,7 +1136,7 @@ class ActionRunner:
         filled = self._fill_in(panel, value)
         added = self._click_exact_text(panel, ("新增", "添加", "新建"), 1_500)
         if self._visible_dialog_count() > dialogs_before:
-            self._dismiss_extra_dialog()
+            self._dismiss_extra_dialog(dialogs_before)
             return False
         if filled:
             try:
@@ -938,26 +1147,35 @@ class ActionRunner:
             except Exception:
                 pass
         if self._visible_dialog_count() > dialogs_before:
-            self._dismiss_extra_dialog()
+            self._dismiss_extra_dialog(dialogs_before)
             return False
         confirmed = self._click_panel_confirm(panel)
         return bool(filled or added or confirmed)
 
-    def _dismiss_extra_dialog(self) -> None:
+    def _dismiss_extra_dialog(self, dialogs_before: int) -> None:
+        """关掉刚弹出来的那层嵌套表单，别碰外层弹窗。
+
+        先在最上层弹窗里找「取消/关闭」——这是有目标的点击。找不到再按 Escape，
+        且只在嵌套层确实还在时才按：Escape 关的是最上面那层，层数一旦判断有误，
+        带走的就是外层弹窗。
+        """
         page = self.session.page
-        try:
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(150)
-        except Exception:
-            pass
+        top = page.locator(MODAL_WRAP_VISIBLE).last
         for label in ("取消", "关闭"):
             try:
-                btn = page.get_by_text(label, exact=True)
+                btn = top.get_by_text(label, exact=True)
                 if btn.count() and btn.last.is_visible():
                     btn.last.click(timeout=800)
                     return
             except Exception:
                 continue
+        if self._visible_dialog_count() <= dialogs_before:
+            return
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(150)
+        except Exception:
+            pass
 
     def _click_exact_text(self, root, labels: tuple[str, ...], timeout_ms: int) -> bool:
         for label in labels:
@@ -1198,6 +1416,14 @@ class ActionRunner:
             pass
 
     def _click_opens_dropdown(self, step: Step) -> bool:
+        """这一击是不是「展开下拉」。
+
+        判据只看**目标是不是 select 触发器**。候选里的 `field` 不算数：它是定位器
+        种类（`CANDIDATE_STABILITY` 里排第 1），不是「这是个下拉」的声明。把它算进来，
+        任何带 field 候选的目标都得「点完出现下拉面板」才算过——点输入框、点数字框、
+        点文本域全都会被判成没生效，而 `_confirm_dropdown_opened` 的失败路径不走
+        `_should_skip_optional`，非必填也照样判红。
+        """
         target = step.target
         if target is None:
             return False
@@ -1205,8 +1431,6 @@ class ActionRunner:
         if widget in DROPDOWN_WIDGETS:
             return True
         for cand in target.candidates:
-            if cand.kind == "field":
-                return True
             value = cand.value or ""
             if cand.kind == "role" and value == "combobox":
                 return True
@@ -1287,8 +1511,10 @@ class ActionRunner:
     def _with_drift(self, step: Step, resolution: Any, data: dict[str, Any] | None = None) -> StepOutcome:
         outcome = StepOutcome(step.id, step.action, "passed", data=data or {})
         if resolution.drifted:
+            # 措辞由 LocatorResolution 自己给：环境原因（浮层没出现 / 点不动）下的命中
+            # 只是退到兜底撞上的，说成「首选失效」会让人去改本来没问题的候选。
             outcome.drift = (
-                f"定位漂移：首选候选失效，命中第 {resolution.fallback_index + 1} 顺位 "
+                f"{resolution.drift_note}，命中第 {resolution.fallback_index + 1} 顺位 "
                 f"{resolution.candidate.describe()}"
             )
         outcome.data["locator"] = resolution.candidate.describe()

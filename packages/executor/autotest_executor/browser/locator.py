@@ -11,7 +11,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeout
@@ -19,8 +20,12 @@ from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeout
 from autotest_protocol import Candidate, Target, learn_candidates
 from autotest_protocol.dsl import candidate_key
 
-from autotest_adapters.oinone.navigation import click_sidebar_menu as click_ant_sidebar_menu
+# 本模块不使用，转出给 browser.actions——它是浏览器层对适配器的唯一入口
+from autotest_adapters.oinone.navigation import (  # noqa: F401
+    click_sidebar_menu as click_ant_sidebar_menu,
+)
 from autotest_adapters.oinone.selectors import (
+    DROPDOWN_MIXED_VISIBLE,
     DROPDOWN_OPTION,
     DROPDOWN_OPTION_ACTIVE,
     DROPDOWN_PANEL,
@@ -41,23 +46,89 @@ from autotest_adapters.oinone.selectors import (
 )
 
 
+class FailureKind:
+    """一个候选没被选中的原因。只有 TARGET_CHANGED 能证明候选本身失效。"""
+
+    # 容器在，候选就是没命中——目标确实变了
+    TARGET_CHANGED = "target_changed"
+    # 目标录在浮层里，但这次那个浮层压根没出现。容器不在，证伪不了候选
+    OVERLAY_ABSENT = "overlay_absent"
+    # 找到了，但动作做不下去（被遮挡 / 不可点）
+    COVERED = "covered"
+    # 等超时
+    TIMEOUT = "timeout"
+
+
+# 环境原因：候选本身没被证伪。一旦进了 LocatorMemory.bad，下一次就会把好候选
+# 从脚本里删掉——缺陷会随时间反向污染已录资产，这比当次失败严重得多。
+ENVIRONMENTAL_KINDS = frozenset(
+    {FailureKind.OVERLAY_ABSENT, FailureKind.COVERED, FailureKind.TIMEOUT}
+)
+
+_ENVIRONMENTAL_NOTES = {
+    FailureKind.OVERLAY_ABSENT: "目标所在浮层未出现",
+    FailureKind.COVERED: "目标被遮挡或点不动",
+    FailureKind.TIMEOUT: "等待超时",
+}
+
+
+@dataclass(frozen=True)
+class CandidateFailure:
+    """一次候选失败，带上原因。判定失效与报失败都读它。"""
+
+    candidate: Candidate
+    kind: str = FailureKind.TARGET_CHANGED
+
+    @property
+    def environmental(self) -> bool:
+        return self.kind in ENVIRONMENTAL_KINDS
+
+
 @dataclass
 class LocatorResolution:
     locator: Locator
     candidate: Candidate
-    # 命中的候选在优先级序列里的位置，>0 表示首选已失效
+    # 命中的候选在优先级序列里的位置，>0 表示退到了后顺位
     fallback_index: int
     tried: list[str]
+    # 本轮失败的候选与原因（含被 skip 的）。报漂移、报失败都读它——
+    # 只看 fallback_index 会把「首选点不到」与「首选真失效」说成同一件事。
+    failed: list[CandidateFailure] = field(default_factory=list)
 
     @property
     def drifted(self) -> bool:
         return self.fallback_index > 0
 
+    @property
+    def environmental(self) -> bool:
+        """本轮失败是否**全**为环境原因（浮层没出现 / 被遮挡 / 超时）。
+
+        为真时 drifted 的命中只是退到兜底撞上的，报「首选失效」就是假警报。
+        failed 为空（靠 memory 记住的好候选直接命中）不算环境原因——那是真漂移。
+        """
+        return bool(self.failed) and all(item.environmental for item in self.failed)
+
+    @property
+    def drift_note(self) -> str:
+        """回退命中的说明。环境原因时点明是哪一种，否则按定位漂移报。"""
+        if not self.environmental:
+            return "定位漂移：首选候选失效"
+        kinds = list(dict.fromkeys(item.kind for item in self.failed))
+        notes = "；".join(_ENVIRONMENTAL_NOTES.get(kind, kind) for kind in kinds)
+        return f"环境原因回退（{notes}，未判首选失效）"
+
 
 class TargetNotFound(Exception):
-    def __init__(self, tried: list[str]) -> None:
-        super().__init__("所有候选定位方式都未命中：" + "; ".join(tried))
+    def __init__(self, tried: list[str], kind: str = FailureKind.TARGET_CHANGED) -> None:
         self.tried = tried
+        self.kind = kind
+        # 环境原因与「脚本坏了」在报告里必须分开。混成同一句，运维会去改本来没问题的候选。
+        head = (
+            "目标所在浮层这次没有出现，未在其中找到元素"
+            if kind in ENVIRONMENTAL_KINDS
+            else "所有候选定位方式都未命中"
+        )
+        super().__init__(head + "：" + "; ".join(tried))
 
 
 class LocatorMemory:
@@ -89,11 +160,23 @@ class LocatorMemory:
         return preferred + unknown or original
 
     def remember(
-        self, target: Target, winner: Candidate, failed: list[Candidate], step_id: str | None
+        self,
+        target: Target,
+        winner: Candidate,
+        failed: list[CandidateFailure],
+        step_id: str | None,
     ) -> None:
         self.good[candidate_key(winner)] = winner
-        for item in failed:
-            self.bad.add(candidate_key(item))
+        # 只有「目标确实变化」才判候选失效。浮层没打开 / 被遮挡 / 超时都说明不了候选
+        # 本身有问题，写进 bad 就会在下面被当成 stale 删掉，并写回控制面生成修补任务。
+        judged = [item for item in failed if not item.environmental]
+        for item in judged:
+            self.bad.add(candidate_key(item.candidate))
+        if failed and not judged:
+            # 这一轮失败全是环境原因：既不能判失效，也不能据此改写首选。
+            # 环境原因下的命中往往只是退到 page 兜底撞上的，把它升为首选等于用一次
+            # 环境抖动改写脚本——比不修更糟。
+            return
         stale = [item for item in target.candidates if candidate_key(item) in self.bad]
         already_first = bool(
             target.candidates and candidate_key(target.candidates[0]) == candidate_key(winner)
@@ -268,6 +351,22 @@ def _roots_for(page: Page, target: Target) -> list[Page | Locator]:
     return roots
 
 
+_OVERLAY_SCOPES = frozenset({"dropdown", "modal", "drawer"})
+
+
+def _overlay_absent(target: Target, roots: list[Page | Locator]) -> bool:
+    """目标录在浮层里，但这次回放那个浮层根本没出现。
+
+    `_roots_for` 找不到浮层时只留一个 page 兜底，所以 roots 只剩一项就是「层没找到」。
+    此时候选没命中证明不了它失效——它要待的容器压根不在，属环境原因。
+
+    刻意偏向「误判成环境原因」：浮层动画未完成时 `_try_root` 可能快照不到，那也只是
+    这一轮不判候选失效，下一轮照常；反过来误判成漂移则会真的删掉好候选。
+    """
+    kind = (target.scope.kind if target.scope else None) or "page"
+    return kind in _OVERLAY_SCOPES and len(roots) <= 1
+
+
 def _try_root_locator(loc: Locator) -> Locator | None:
     try:
         total = loc.count()
@@ -283,11 +382,55 @@ def _try_root_locator(loc: Locator) -> Locator | None:
     return None
 
 
-def _immediately_visible(locator: Locator) -> bool:
+# 可见性探测上限：隐藏副本通常是个位数，无上限会在病态 DOM（同一选择器命中上百个节点）
+# 上把一次解析拖成秒级。20 已远超实际需要，同时给「可见的那个排在很后面」留了余量。
+_VISIBILITY_PROBE_LIMIT = 20
+
+# 轮询间隔。Playwright 1.49.1 没有 locator.filter(visible=True)（需 ≥1.51），
+# 且给候选 CSS 拼 `:visible` 会破坏 role/text 等非 CSS 候选，所以自己轮询。
+_VISIBILITY_POLL_MS = 100
+
+
+def _first_visible(locator: Locator) -> Locator | None:
+    """按 DOM 顺序返回第一个可见匹配；全不可见或探测超限时返回 None。
+
+    Ant Design / rc-virtual-list 会在同一层里留一份隐藏副本（量高用）并排在 DOM 前面。
+    取 `.first` 会命中它，从而把整个候选误判为不可见——可见的那个从未被检查。
+
+    与 `_try_root` 的「取最后一个可见」**刻意不同向**：那里要的是最新打开的面板
+    （新面板追加在 DOM 后面），这里要的是第一个活着的匹配。两者理由不同，不强行统一。
+    """
     try:
-        return locator.count() > 0 and locator.first.is_visible()
+        total = locator.count()
     except Exception:
-        return False
+        return None
+    for index in range(min(total, _VISIBILITY_PROBE_LIMIT)):
+        node = locator.nth(index)
+        try:
+            if node.is_visible():
+                return node
+        except Exception:
+            continue
+    return None
+
+
+def _wait_first_visible(locator: Locator, timeout_ms: int) -> Locator | None:
+    """轮询到超时，返回第一个可见匹配。
+
+    替代 `locator.first.wait_for(state="visible")`——后者只认第一个匹配，
+    正是隐藏副本场景下失效的那条路。
+    """
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    while True:
+        found = _first_visible(locator)
+        if found is not None:
+            return found
+        if time.monotonic() >= deadline:
+            return None
+        try:
+            locator.page.wait_for_timeout(_VISIBILITY_POLL_MS)
+        except Exception:
+            return None
 
 
 def _locator_accepts_fill(locator: Locator, fill_value: str | None) -> bool:
@@ -310,31 +453,59 @@ def resolve_target(
     step_id: str | None = None,
     *,
     fill_value: str | None = None,
+    skip: dict[str, str] | None = None,
 ) -> LocatorResolution:
     original = target.ordered()
     ordered = memory.order(target) if memory is not None else original
     tried: list[str] = []
-    failed: list[Candidate] = []
+    failed: list[CandidateFailure] = []
+    seen_failed: set[str] = set()
+    # 解析之外已经失败的候选（点不到）与原因。它们不能被返回，但要按原因记账——
+    # 调用方知道得比这里多，所以以调用方给的为准。
+    skipped = skip or {}
     roots = _roots_for(page, target)
+    # 浮层没出现时，这一轮的失败一律按环境原因记：容器不在，证伪不了任何候选。
+    failure_kind = (
+        FailureKind.OVERLAY_ABSENT if _overlay_absent(target, roots) else FailureKind.TARGET_CHANGED
+    )
     has_preferred = bool(memory and ordered and candidate_key(ordered[0]) in memory.good)
+
+    def _failed(candidate: Candidate) -> CandidateFailure:
+        return CandidateFailure(candidate, skipped.get(candidate_key(candidate), failure_kind))
+
+    def _record(candidate: Candidate) -> None:
+        """一个候选只记一次，且以最先给出的原因为准。"""
+        key = candidate_key(candidate)
+        if key in seen_failed:
+            return
+        seen_failed.add(key)
+        failed.append(_failed(candidate))
 
     def _hit(candidate: Candidate, locator: Locator, fallback_index: int) -> LocatorResolution:
         if memory is not None:
             memory.remember(target, candidate, failed, step_id)
         return LocatorResolution(
-            locator=locator, candidate=candidate, fallback_index=fallback_index, tried=tried
+            locator=locator,
+            candidate=candidate,
+            fallback_index=fallback_index,
+            tried=tried,
+            failed=list(failed),
         )
 
     # 已经在页面上的元素立刻点，不要让失效的首选空等数秒。
     for index, candidate in enumerate(ordered):
         description = candidate.describe()
+        if candidate_key(candidate) in skipped:
+            tried.append(description + " (已试过，点不动)")
+            _record(candidate)
+            continue
         for root in roots:
-            locator = _build(root, candidate).first
-            if not _immediately_visible(locator):
+            locator = _first_visible(_build(root, candidate))
+            if locator is None:
                 continue
             if not _locator_accepts_fill(locator, fill_value):
                 tried.append(description + " (只读日期框，跳过)")
-                failed.append(candidate)
+                _record(candidate)
                 continue
             tried.append(description)
             original_index = next(
@@ -342,32 +513,34 @@ def resolve_target(
                 index,
             )
             if index > 0:
-                failed.extend(ordered[:index])
-                if memory is not None:
-                    for item in failed:
-                        memory.bad.add(candidate_key(item))
+                # 前面的候选按同一原因记；进不进 bad 由 remember 按 environmental 判
+                for item in ordered[:index]:
+                    _record(item)
             return _hit(candidate, locator, original_index)
 
     for index, candidate in enumerate(ordered):
         description = candidate.describe()
+        if candidate_key(candidate) in skipped:
+            tried.append(description + " (已试过，点不动)")
+            _record(candidate)
+            continue
         tried.append(description)
         wait_ms = _candidate_timeout(index, timeout_ms, len(ordered), has_preferred)
         matched = None
         for root_idx, root in enumerate(roots):
-            try:
-                locator = _build(root, candidate).first
-                root_wait = _root_wait_ms(root_idx, len(roots), wait_ms)
-                locator.wait_for(state="visible", timeout=root_wait)
-            except Exception:
+            root_wait = _root_wait_ms(root_idx, len(roots), wait_ms)
+            matched = _wait_first_visible(_build(root, candidate), root_wait)
+            if matched is None:
                 continue
-            if not _locator_accepts_fill(locator, fill_value):
+            if not _locator_accepts_fill(matched, fill_value):
                 continue
-            matched = locator
             break
         if matched is None:
-            failed.append(candidate)
-            if memory is not None:
+            # 全部候选都没命中时 remember 不会被调用，这里得自己落一次；
+            # 但同样只认「目标确实变化」，环境原因不写。
+            if memory is not None and not _failed(candidate).environmental:
                 memory.bad.add(candidate_key(candidate))
+            _record(candidate)
             continue
         original_index = next(
             (i for i, item in enumerate(original) if candidate_key(item) == candidate_key(candidate)),
@@ -375,7 +548,7 @@ def resolve_target(
         )
         return _hit(candidate, matched, original_index)
 
-    raise TargetNotFound(tried)
+    raise TargetNotFound(tried, failure_kind)
 
 
 def _candidate_timeout(index: int, timeout_ms: int, count: int, has_preferred: bool) -> int:
@@ -423,6 +596,56 @@ def _visible_dropdown_panel(page: Page):
 def visible_dropdown_panel(page: Page):
     """当前可见的下拉面板。已打开就不要再点触发器，Ant 下拉会点一下关一下。"""
     return _visible_dropdown_panel(page)
+
+
+def wait_visible_dropdown_panel(page: Page, timeout_ms: int):
+    """轮询到出现可见下拉面板为止，超时返回 None。
+
+    替代 `wait_for_timeout(250)` + `locator.last.wait_for(visible)`：那 250ms 是纯硬等，
+    动画快时白等，慢时又不够。调用点已经确认过「当前没有可见面板」，
+    所以之后出现的面板一定是刚点开的那个，不会与正在关闭的旧面板混淆。
+    """
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    while True:
+        panel = visible_dropdown_panel(page)
+        if panel is not None:
+            return panel
+        if time.monotonic() >= deadline:
+            return None
+        try:
+            page.wait_for_timeout(_VISIBILITY_POLL_MS)
+        except Exception:
+            return None
+
+
+def wait_any_dropdown_panel(page: Page, timeout_ms: int):
+    """轮询到出现可见下拉面板为止，两种口径取**并集**；超时返回 None。
+
+    与 `wait_visible_dropdown_panel` 的差别只在口径，不在等待方式：
+    那个只认 `DROPDOWN_PANEL`（本仓判定「下拉开着」的正规口径，多出 cascader），
+    这个还认 `DROPDOWN_MIXED_VISIBLE`（`_wait_dropdown` 原来的口径，多出
+    `.el-popper` / `.ant-dropdown`）。两份各有对方没有的选择器，所以取并集。
+
+    为什么要并集：调用点是「点击后确认下拉开没开」。它要抓的是**什么都没弹出来**，
+    口径取窄会把原本能过的用例判成「点了没生效」——那是把新检查变成新故障。
+    收窄口径是「选择器单一来源」那一节的事，不在这里顺手做。
+    """
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    while True:
+        if visible_dropdown_panel(page) is not None:
+            return True
+        mixed = page.locator(DROPDOWN_MIXED_VISIBLE)
+        try:
+            if mixed.count() and mixed.last.is_visible():
+                return True
+        except Exception:
+            pass
+        if time.monotonic() >= deadline:
+            return None
+        try:
+            page.wait_for_timeout(_VISIBILITY_POLL_MS)
+        except Exception:
+            return None
 
 
 def _dropdown_search_box(page: Page):

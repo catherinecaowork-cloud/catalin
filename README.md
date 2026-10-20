@@ -220,18 +220,41 @@ python scripts\selftest_probe.py
 
 ## 还没做
 
-- **下一期**
+- **已知缺陷**
+  - 弹窗 / 下拉 / 日期浮层内元素**偶发**定位失败或点击无效。根因已逐处定位到
+    `browser/locator.py` 与 `browser/actions.py` 的具体行，见 change `locator-popup-fix`。
+    这是当前唯一有明确复现路径的真实缺陷，也是真站「现录」验收的前置
+- **下一期**（按依赖顺序，见下节）
   - 真站「现录」验收：意图 → 录制 → 观察者/编译自证 → 保存 → 二次回放
-  - L1 接口引擎：导 HAR / OpenAPI、变量提取、批量跑
   - CI 闸门：`active` 流程进流水线，失败非零退出
   - 对象库：控件登记一次、多用例引用（现在定位还贴在每一步上）
-- 验证码与 SSO 明确不支持
-- `packages/adapters/oinone` 已起步，JS 注入里还有框架特例
+  - L1 接口引擎：导 HAR / OpenAPI、变量提取、批量跑
+- 验证码、SSO、**iframe 内元素**明确不支持。
+  其中验证码/SSO 的**检测链路尚未接通**：`UnsupportedLoginChallenge`（`auth.py:17`）、
+  `detect_login_challenge`（`auth.py:147`）与两处 `except`（`recorder.py:238`、`runner.py:74`）都在，
+  但全仓没有任何 `raise` 点、`detect_login_challenge` 也无调用点——遇到验证码不会被识别为「不支持」，
+  而是继续跑到登录断言才失败。属于未接完的线，不是本轮清理造成的
+- `packages/adapters/oinone` 已起步，JS 注入里还有框架特例；
+  通用件（Ant Design / Element UI 的选择器）也还留在该目录下，一并见 change `locator-popup-fix`
 
 ## 方向与排期
 
-目标形态是**内网团队版**，不是 SaaS。多副本、对象存储、租户隔离已正式取消，
-理由与三步重构排期见 `docs/platform-restructure-plan.md`。
+目标形态是**内网团队版**，不是 SaaS。多副本与对象存储已正式取消；
+**多租户暂缓非取消**——`Scope` 的 tenant / project 字段保留但恒为默认值，隔离规则未实现也未承诺，
+触发条件见 `docs/platform-restructure-plan.md` §6.6。
+
+三步重构（测试网 → 拆边界 → React 控制台）已完成。下一期**按依赖顺序**，不是并列清单：
+
+1. ~~`restructure-debt`~~ — **已完成（2026-10-12）**：全仓 864 处未用导入清零、2 处重复定义修掉、
+   重复路由注册删除（启动警告消失）、一次性脚本删除、lint 门禁进 CI；`pytest` 仍 45 passed。
+   仅余真站回放验收待环境
+2. `locator-popup-fix` — 修浮层内元素偶发定位失败与点击无效。**动工前先把缺陷复现出来**
+   （本地 HTML 复刻 Ant Design 下拉的 DOM 形态），现有诊断是读代码得出的，尚未实际复现过
+3. 真站「现录」验收 — 需先做 2，否则验收结果取决于运气
+4. `ci-daily-gate` — `active` 流程进流水线 — 需先做 2，否则闸门天天红、红灯失去意义
+5. 对象库 + Spy，然后 L1 接口引擎（HAR）；数据驱动与检查点暂缓
+
+理由与完整排期见 `docs/platform-restructure-plan.md`。
 
 功能线文档：
 

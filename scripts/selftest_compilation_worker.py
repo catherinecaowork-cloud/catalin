@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session, sessionmaker
 import autotest_control.compilation_worker as module
 from autotest_control.ai import CompileResult, TokenUsage
 from autotest_control.models import Base, RecordingCompilation, Run, Site
-from autotest_protocol import Step
 
 
 def _assert(condition: bool, message: str) -> None:

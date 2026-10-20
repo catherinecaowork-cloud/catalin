@@ -37,4 +37,6 @@
 - [x] 6.1 新增 `docs/p1.2-ai-compiler-plan.md` 与 README 更新
 - [x] 6.2 OpenSpec change `ai-compiler-p1-2` 提案/规格/设计/任务
 - [ ] 6.3 真实站点端到端：意图→录制→AI 编译验证通过→保存→二次回放（需配置网关与 Worker）
-  - 2026-09-20：福瑞丝导入回放已过；本条现录验收 **下一期**，本期不做
+  - **代码已完成**，本 change 唯一未勾选项挂起的是**真站现录验收**，不是功能未实现。
+  - 2026-09-20：福瑞丝导入回放已过。
+  - 现录验收需先修浮层定位缺陷（change `locator-popup-fix`），否则验收结果取决于运气、不可信。排在 `docs/platform-restructure-plan.md` §5「之后」第 3 项。

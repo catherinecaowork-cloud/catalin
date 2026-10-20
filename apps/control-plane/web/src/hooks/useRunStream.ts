@@ -112,6 +112,8 @@ function buildStepsFromEvents(events: StreamEvent[]): Map<string, RunStep> {
 
         drift: data.drift ? String(data.drift) : undefined,
 
+        failure: detail.failure,
+
         elapsed: typeof data.elapsed_ms === "number" ? data.elapsed_ms : undefined,
 
         screenshot: stepScreenshot(data),
@@ -223,6 +225,8 @@ function hydrateStepsFromSummary(summary: Record<string, unknown> | null): RunSt
       message: item.message ? String(item.message) : undefined,
 
       drift: item.drift ? String(item.drift) : undefined,
+
+      failure: detail.failure,
 
       elapsed: typeof item.elapsed_ms === "number" ? item.elapsed_ms : undefined,
 
@@ -460,6 +464,8 @@ export function useRunStream(
           message: data.message ? String(data.message) : undefined,
 
           drift: data.drift ? String(data.drift) : undefined,
+
+          failure: detail.failure,
 
           elapsed: typeof data.elapsed_ms === "number" ? data.elapsed_ms : undefined,
 

@@ -1520,11 +1520,16 @@ body {
 }
 
 .step-grid .msg,
+.step-grid .failure,
 .step-grid .drift {
   font-size: 10px;
   color: var(--muted);
   margin-top: 2px;
   white-space: normal;
+}
+
+.step-grid .failure {
+  color: var(--fail);
 }
 
 .step-grid .drift {

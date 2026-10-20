@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from autotest_protocol import Step
 
 from .client import AnthropicClient
-from .schemas import CompileContract, CompileResult, ImageInput, MessageResult
+from .schemas import CompileContract, CompileResult, ImageInput
 
 _FENCE_RE = re.compile(
     r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$",
