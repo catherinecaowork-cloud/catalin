@@ -169,6 +169,8 @@ function AppWorkbenchBody({
           }
           toolbar={
             <MainToolbar
+              sitesState={sitesState}
+              onLog={onLog}
               onLaunchRecord={() => setRecordModalOpen(true)}
               onOpenRun={() => openModule("run")}
               onToggleLog={onToggleLog}

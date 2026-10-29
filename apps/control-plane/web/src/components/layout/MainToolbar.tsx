@@ -1,22 +1,49 @@
 import { CircleDot, Pause, Play, Square, Terminal } from "lucide-react";
+import { useState } from "react";
 
 import { useRecordContext } from "../../context/RecordContext";
+import type { useSites } from "../../hooks/useSites";
+import { RecordEnvironmentsModal } from "../record/RecordEnvironmentsModal";
+import { RecordEnvPicker } from "../record/RecordEnvPicker";
 import { cn } from "../ui";
 
+type SitesState = ReturnType<typeof useSites>;
+
 type Props = {
+  sitesState: SitesState;
+  onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onLaunchRecord: () => void;
   onOpenRun: () => void;
   onToggleLog: () => void;
   logOpen: boolean;
 };
 
-export function MainToolbar({ onLaunchRecord, onOpenRun, onToggleLog, logOpen }: Props) {
+export function MainToolbar({
+  sitesState,
+  onLog,
+  onLaunchRecord,
+  onOpenRun,
+  onToggleLog,
+  logOpen,
+}: Props) {
   const record = useRecordContext();
   const recording = record.stage === "busy";
+  // 「当前环境」是工作区级状态：explorer / 执行 / 历史 / 录制默认值都跟着它走。
+  // 切换入口放在常驻顶栏，不必再借道录制弹窗。
+  const [envManageOpen, setEnvManageOpen] = useState(false);
 
   return (
     <div className="main-toolbar titlebar-toolbar" role="toolbar" aria-label="主操作">
       <div className="main-toolbar-group">
+        <div className="main-toolbar-env">
+          <RecordEnvPicker
+            sites={sitesState.sites}
+            value={sitesState.selectedSiteId ?? ""}
+            onChange={sitesState.setSelectedSiteId}
+            onManageEnvironments={() => setEnvManageOpen(true)}
+          />
+        </div>
+
         <button
           type="button"
           className={cn("main-toolbar-btn", "record", recording && "busy")}
@@ -82,6 +109,22 @@ export function MainToolbar({ onLaunchRecord, onOpenRun, onToggleLog, logOpen }:
           </span>
         </button>
       </div>
+
+      <RecordEnvironmentsModal
+        open={envManageOpen}
+        sites={sitesState.sites}
+        onClose={() => setEnvManageOpen(false)}
+        onCreateSite={async (name, baseUrl, env) =>
+          await sitesState.createSite(name, baseUrl, env)
+        }
+        onUpdateSite={sitesState.updateSite}
+        onDeleteSite={sitesState.deleteSite}
+        onSaveFormLogin={(site, path, username, password) =>
+          sitesState.saveFormLogin(site, path, username, password, onLog)
+        }
+        onDeleteCredential={sitesState.deleteCredential}
+        onLog={onLog}
+      />
     </div>
   );
 }

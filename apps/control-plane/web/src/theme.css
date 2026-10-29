@@ -541,6 +541,31 @@ body {
   background: rgba(255, 255, 255, 0.35);
 }
 
+/* 顶栏常驻的「当前环境」切换器：比录制弹窗里的更紧凑 */
+.main-toolbar-env {
+  margin-right: 4px;
+}
+
+.main-toolbar-env .record-env-trigger {
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  background: transparent;
+  border-color: transparent;
+  padding: 0 8px;
+}
+
+.main-toolbar-env .record-env-trigger:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--bg-input);
+}
+
+/* 菜单默认右对齐（录制弹窗里合理）；顶栏贴着屏幕左缘，必须改为左对齐展开 */
+.main-toolbar-env .record-env-menu {
+  right: auto;
+  left: 0;
+}
+
 .main-toolbar-btn {
   display: inline-flex;
   align-items: center;
