@@ -355,6 +355,8 @@
       widget: widget ? widget.kind : null,
       panel: panel ? `${panel.kind}:${panel.attach}` : null,
       trigger_css: widget && widget.trigger_css ? widget.trigger_css : null,
+      // 候选全失效时的通用退路：语义指纹，与站点框架无关。
+      fingerprint: fingerprintOf(raw),
     };
   };
 
@@ -882,6 +884,37 @@
     return text;
   };
 
+  const looksLikeField = (el) => !!(el && el.matches && (
+    el.matches('input, textarea, select, [role=combobox]')
+    || (el.querySelector && el.querySelector('input, textarea, select, [role=combobox]'))
+  ));
+
+  // 不看类名，只看结构：字段项里「控件之前那段短文本」就是它的标签。
+  // Oinone 的 <div class="label"> 一旦被框架重命名，按类名找标签会整组失效，
+  // 指纹里最关键的 label 就没了。表格格子不走这里（由 fpGridOf 按行列表头负责），
+  // 否则会把左边一列的「1」当成标签。
+  const structuralLabelOf = (el) => {
+    if (!el || !el.matches) return null;
+    if (!looksLikeField(el)) return null;
+    if (closestOf(el, 'td, th')) return null;
+    let node = el;
+    for (let i = 0; node && node !== document.body && i < 6; i++) {
+      const parent = parentOf(node);
+      if (!parent || !parent.children) break;
+      for (const sib of Array.from(parent.children)) {
+        if (sib === node || sib.contains(el)) break;
+        if (sib.querySelector && sib.querySelector(
+          'input, textarea, select, [role=combobox], .el-select, .ant-select, .ant-picker'
+        )) continue;
+        const text = cleanFieldLabel(sib.innerText);
+        if (!text || text.length > 12 || !/[一-鿿]/.test(text)) continue;
+        return text;
+      }
+      node = parent;
+    }
+    return null;
+  };
+
   // Oinone form-container：必填字段标签常写成「*交货日期」，在控件左侧/前一个兄弟节点。
   const oinoneStarLabelOf = (el) => {
     const host = closestOf(
@@ -893,6 +926,11 @@
     for (let i = 0; node && i < 8; i++) {
       let prev = node.previousElementSibling;
       while (prev) {
+        // 标签不可能是一个装着输入控件的容器。表格外的表单块常是这形态，
+        // 不先挡住就会把整块表单的第一行文本（比如「PO单号」）当成格子的标签。
+        if (prev.querySelector('input, textarea, select, .ant-picker, .el-date-editor, .el-select, .ant-select')) {
+          break;
+        }
         const raw = (prev.innerText || '').trim().split('\n')[0].trim();
         if (/^\*[\u4e00-\u9fffA-Za-z0-9/（）()-]{1,16}$/.test(raw)) {
           return cleanFieldLabel(raw);
@@ -900,9 +938,6 @@
         const plain = cleanFieldLabel(raw);
         if (plain && plain.length >= 2 && plain.length <= 12 && /^[\u4e00-\u9fff]/.test(plain)) {
           return plain;
-        }
-        if (prev.querySelector('input, textarea, select, .ant-picker, .el-date-editor, .el-select, .ant-select')) {
-          break;
         }
         prev = prev.previousElementSibling;
       }
@@ -964,7 +999,12 @@
     return raw || null;
   };
 
-  const formItemLabel = (el) => {
+  const formItemLabel = (el, opts) => {
+    // 表格格子的「标签」是行×列（fpGridOf 负责）。取左边一格的文本当标签只会添乱：
+    // 同一个格子的指纹会随左边单元格的值变化而漂移。
+    if (closestOf(el, 'td, th')) return null;
+    // 指纹只认字段的标签：工具栏里前一个按钮的文字不是「保存」的标签。
+    if (opts && opts.fieldOnly && !looksLikeField(el)) return null;
     const item = widgetItemOf(el);
     const named = item && item.getAttribute && item.getAttribute('data-name');
     if (named) {
@@ -973,6 +1013,8 @@
     }
     const wrap = oinoneFieldWrapOf(el);
     if (wrap && wrap.label) return wrap.label;
+    const structural = structuralLabelOf(el);
+    if (structural) return structural;
     const oinone = oinoneStarLabelOf(el);
     if (oinone) return oinone;
     const raw = nearbyLabelOf(el);
@@ -1236,5 +1278,252 @@
       trigger_css: (info && info.trigger_css) || null,
       required: fieldRequiredOf(el),
     };
+  };
+  // ---- 元素指纹：与站点框架无关的语义特征 ----
+  //
+  // 候选（上面的 candidates）是「能精确命中的选择器」，指纹是「像不像」。
+  // 回放时候选全失效才用指纹：在实时 DOM 里按语义相似度找最像的元素，
+  // 所以新页面、新控件不需要再加一种候选 kind。
+  const FP_MAX_TEXT = 40;
+  const FP_FILLER_PLACEHOLDER = /^(请输入|请选择|请填写|搜索|输入)/;
+
+  const fpTrim = (value, limit) => {
+    const text = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    return text.slice(0, limit || FP_MAX_TEXT);
+  };
+
+  const fpAttrsOf = (el) => {
+    const out = {};
+    for (const key of ['name', 'type', 'title', 'autocomplete']) {
+      const value = fpTrim(el.getAttribute && el.getAttribute(key));
+      if (value) out[key] = value;
+    }
+    for (const attr of Array.from(el.attributes || [])) {
+      if (!attr.name.toLowerCase().startsWith('data-')) continue;
+      if (/^data-(v-|vxe-|atp-|rowid|colid|index|row|col)/i.test(attr.name)) continue;
+      const value = fpTrim(attr.value);
+      if (!value) continue;
+      out[attr.name] = value;
+      if (Object.keys(out).length >= 8) break;
+    }
+    return out;
+  };
+
+  const fpSectionOf = (el) => {
+    const overlay = closestOf(el, '[role=dialog], .el-dialog, .ant-modal, .oio-modal, .el-drawer, .ant-drawer');
+    if (overlay) {
+      const title = overlay.querySelector(
+        '.el-dialog__title, .ant-modal-title, [class*="modal-title"], h1, h2, h3'
+      );
+      const text = fpTrim(cleanFieldLabel(title && title.innerText));
+      if (text) return text;
+    }
+    const section = closestOf(el, 'section.form-section, .form-section, [class*="form-section"]');
+    if (section) {
+      const heading = section.querySelector('h1, h2, h3, h4, legend, .section-title, [class*="section-title"]');
+      const text = fpTrim(cleanFieldLabel(heading && heading.innerText));
+      if (text) return text;
+    }
+    return null;
+  };
+
+  // 表格坐标。vxe 把表头和表体拆成两张 table，所以先按 col_N 类名对齐，
+  // 再退到同一容器里的 thead，不要求表头与单元格在同一张表。
+  const fpGridOf = (el) => {
+    const cell = closestOf(el, 'td, th');
+    if (!cell) return null;
+    const row = closestOf(cell, 'tr');
+    if (!row) return null;
+    const colToken = Array.from(cell.classList || []).find((name) => /^col_\d+$/.test(name)) || null;
+    const scopes = [];
+    const table = closestOf(row, 'table');
+    if (table) scopes.push(table);
+    const wrap = closestOf(row, '.vxe-table, .el-table, [class*="table-wrapper"]');
+    if (wrap && wrap !== table) scopes.push(wrap);
+    let headerCells = null;
+    let headerCell = null;
+    for (const scope of scopes) {
+      const headerRow = scope.querySelector('thead tr');
+      if (!headerRow) continue;
+      const cells = Array.from(headerRow.children).filter((node) => /^(TD|TH)$/.test(node.tagName));
+      if (!cells.length) continue;
+      let hit = colToken ? cells.find((node) => node.classList && node.classList.contains(colToken)) : null;
+      if (!hit) {
+        const index = Array.from(row.children).indexOf(cell);
+        if (index >= 0 && index < cells.length) hit = cells[index];
+      }
+      if (hit) {
+        headerCells = cells;
+        headerCell = hit;
+        break;
+      }
+    }
+    if (!headerCell) return null;
+    const rowLabel = fpTrim(cleanFieldLabel(row.children[0] && row.children[0].innerText), 20);
+    const colLabel = fpTrim(cleanFieldLabel(headerCell.innerText), 20);
+    if (!rowLabel && !colLabel) return null;
+    return { row: rowLabel, col: colLabel };
+  };
+
+  const fpIndexOf = (el) => {
+    const parent = el.parentElement;
+    if (!parent) return null;
+    const role = roleOf(el);
+    const same = Array.from(parent.children).filter(
+      (node) => node.tagName === el.tagName && roleOf(node) === role
+    );
+    const index = same.indexOf(el);
+    return index >= 0 ? index : null;
+  };
+
+  const fpUniquePath = (el) => {
+    const parts = [];
+    let node = el;
+    while (node && node !== document.body) {
+      const parent = node.parentElement;
+      if (!parent) return null;
+      const same = Array.from(parent.children).filter((item) => item.tagName === node.tagName);
+      parts.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${same.indexOf(node) + 1})`);
+      node = parent;
+    }
+    if (node !== document.body) return null;
+    return parts.length ? `body > ${parts.join(' > ')}` : null;
+  };
+
+  const fingerprintOf = (el) => {
+    if (!el || !el.tagName) return null;
+    const tag = el.tagName.toLowerCase();
+    const isField = ['input', 'textarea', 'select'].includes(tag);
+    const label = fpTrim(formItemLabel(el, { fieldOnly: true }));
+    const aria = fpTrim(el.getAttribute && el.getAttribute('aria-label'));
+    const name = aria || fpTrim(labelOf(el)) || (isField ? null : fpTrim(visibleText(el)));
+    const placeholder = fpTrim(el.getAttribute && el.getAttribute('placeholder'));
+    const text = isField ? null : fpTrim(visibleText(el));
+    const grid = fpGridOf(el);
+    const fingerprint = {
+      tag,
+      role: roleOf(el) || fpTrim(el.getAttribute && el.getAttribute('role')),
+      name,
+      label,
+      placeholder: placeholder && !FP_FILLER_PLACEHOLDER.test(placeholder) ? placeholder : null,
+      text: text && text !== label ? text : null,
+      attrs: fpAttrsOf(el),
+      section: fpSectionOf(el),
+      grid_row: grid ? grid.row : null,
+      grid_col: grid ? grid.col : null,
+      index: fpIndexOf(el),
+      path_hint: fpUniquePath(el),
+    };
+    if (!fingerprint.role && !fingerprint.name && !fingerprint.label
+        && !fingerprint.placeholder && !fingerprint.text && !fingerprint.grid_col) {
+      return null;
+    }
+    return fingerprint;
+  };
+
+  const fpMatchRatio = (want, got) => {
+    const left = fpTrim(want);
+    const right = fpTrim(got);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    if (left.includes(right) || right.includes(left)) return 0.6;
+    return 0;
+  };
+
+  const fpScoreOf = (fp, el) => {
+    const cand = fingerprintOf(el);
+    if (!cand) return null;
+    let score = 0;
+    let total = 0;
+    let semantic = 0;
+    const feature = (weight, want, got, isSemantic) => {
+      if (!want) return;
+      total += weight;
+      const ratio = fpMatchRatio(want, got);
+      if (ratio > 0) {
+        score += weight * ratio;
+        if (isSemantic && ratio >= 0.6) semantic += 1;
+      }
+    };
+    total += 10;
+    if (fp.tag && fp.tag === cand.tag) score += 10;
+    total += 15;
+    if (fp.role && fp.role === cand.role) score += 15;
+    feature(30, fp.label, cand.label, true);
+    feature(30, fp.name, cand.name, true);
+    feature(15, fp.placeholder, cand.placeholder, false);
+    feature(20, fp.text, cand.text, true);
+    feature(35, fp.grid_col, cand.grid_col, true);
+    feature(20, fp.grid_row, cand.grid_row, false);
+    feature(10, fp.section, cand.section, false);
+    for (const [key, value] of Object.entries(fp.attrs || {})) {
+      if (key === 'role' || key === 'type') continue;
+      feature(8, value, (cand.attrs || {})[key], false);
+    }
+    if (fp.index != null) {
+      total += 5;
+      if (cand.index === fp.index) score += 5;
+    }
+    return total ? { ratio: score / total, semantic, cand } : null;
+  };
+
+  const FP_SELECTOR = [
+    'input', 'textarea', 'select', 'button', 'a[href]',
+    '[role=button]', '[role=combobox]', '[role=option]', '[role=tab]',
+    '[contenteditable=true]', '.el-select__wrapper', '.ant-select-selector',
+    '.el-tag', '.ant-btn', '.el-button', '[data-action-name]',
+  ].join(',');
+
+  window.__atpFingerprint = fingerprintOf;
+  window.__atpFingerprintPath = fpUniquePath;
+
+  // 在实时 DOM 里按指纹找最像的元素。只返回原始分数，阈值由 Python 侧定，
+  // 方便调参和写测试；命中元素会临时打 data-atp-hit 供调用方校验没认错。
+  window.__atpFindByFingerprint = (fp, opts) => {
+    if (!fp) return { ok: false, reason: 'empty fingerprint', matches: [] };
+    const limit = (opts && opts.limit) || 5;
+    const scopedTag = ['input', 'textarea', 'select'].includes(fp.tag) ? fp.tag : null;
+    const nodes = Array.from(document.querySelectorAll(scopedTag || FP_SELECTOR));
+    const scored = [];
+    for (const node of nodes.slice(0, 4000)) {
+      if (!isShown(node)) continue;
+      if (node.closest && node.closest('#__atp_recorder_badge')) continue;
+      const result = fpScoreOf(fp, node);
+      if (!result || result.semantic < 1) continue;
+      scored.push({ ...result, node });
+    }
+    scored.sort((left, right) => right.ratio - left.ratio);
+    const matches = scored.slice(0, limit).map((item) => ({
+      score: Math.round(item.ratio * 1000) / 1000,
+      tag: item.cand.tag,
+      label: item.cand.label,
+      text: item.cand.text,
+      anchor: item.cand.grid_col ? `${item.cand.grid_row || ''}×${item.cand.grid_col}` : null,
+    }));
+    const top = scored[0];
+    if (!top) return { ok: false, reason: 'no element above semantic floor', matches };
+    const path = fpUniquePath(top.node);
+    if (!path) return { ok: false, reason: 'element not addressable (shadow DOM?)', matches };
+    const token = `atp${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    top.node.setAttribute('data-atp-hit', token);
+    return {
+      ok: true,
+      token,
+      path,
+      score: Math.round(top.ratio * 1000) / 1000,
+      second: scored[1] ? Math.round(scored[1].ratio * 1000) / 1000 : 0,
+      matches,
+      element: {
+        tag: top.cand.tag,
+        label: top.cand.label,
+        text: top.cand.text,
+        grid: top.cand.grid_col ? `${top.cand.grid_row || ''}×${top.cand.grid_col}` : null,
+      },
+    };
+  };
+
+  window.__atpClearFingerprintHit = () => {
+    document.querySelectorAll('[data-atp-hit]').forEach((node) => node.removeAttribute('data-atp-hit'));
   };
 })();

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import time
@@ -190,6 +191,42 @@ class RecordExecutor:
         self._live_preview_steps: list[dict[str, Any]] = []
         self._live_preview_event_count = -1
 
+    def _wait_for_site_open(self, timeout_seconds: float = 150.0) -> None:
+        """站点临时拒连时等它放行，最多 timeout_seconds；超时则按原样开跑。
+
+        直连探测（不走系统代理）：任何 HTTP 应答都算放行，只有连接层被拒才算堵。"""
+        parsed = urlsplit(self.job.site.base_url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        conn_factory = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        deadline = time.monotonic() + timeout_seconds
+        notified = False
+        while True:
+            try:
+                conn = conn_factory(parsed.hostname, port, timeout=4)
+                conn.request("GET", parsed.path or "/", headers={"Host": parsed.netloc})
+                resp = conn.getresponse()
+                resp.read()
+                conn.close()
+                if notified:
+                    self._emit("log", level="info", message=f"站点已恢复放行（HTTP {resp.status}），继续录制")
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self._emit(
+                        "log",
+                        level="warning",
+                        message=f"站点 {parsed.netloc} 持续拒连 {int(timeout_seconds)} 秒，放弃等待按原样开跑",
+                    )
+                    return
+                if not notified:
+                    notified = True
+                    self._emit(
+                        "log",
+                        level="warning",
+                        message=f"站点 {parsed.netloc} 暂时拒绝连接，每 5 秒重试（最多等 {int(timeout_seconds)} 秒）",
+                    )
+                time.sleep(5)
+
     def execute(self) -> str:
         started = time.monotonic()
         self._emit(
@@ -203,6 +240,9 @@ class RecordExecutor:
         summary: dict[str, Any] = {}
         try:
             material = self._resolve_auth()
+            # 141 一类站点会临时拒绝连接（疑似按连接突发速率限流，约一分钟自愈）。
+            # 先等放行再开浏览器，别让录制死在白屏上。
+            self._wait_for_site_open()
             # 录制必须开窗：人要看见并操作。没有桌面会话就明确失败。
             self.session.start(cookies=material.cookies, extra_headers=material.headers)
             apply_main_only_layout(self.session.page)

@@ -111,6 +111,8 @@ class LocatorResolution:
     @property
     def drift_note(self) -> str:
         """回退命中的说明。环境原因时点明是哪一种，否则按定位漂移报。"""
+        if self.candidate.kind == "fingerprint":
+            return "定位自愈：候选全部失效，按语义指纹找回"
         if not self.environmental:
             return "定位漂移：首选候选失效"
         kinds = list(dict.fromkeys(item.kind for item in self.failed))
@@ -445,6 +447,105 @@ def _locator_accepts_fill(locator: Locator, fill_value: str | None) -> bool:
     return parse_picker_value(fill_value) is not None
 
 
+# 指纹命中阈值：相似度够高、且明显领先第二名，才算认准。
+# 宁可失败报出来，也不把值填到「长得像」的别的控件里。
+FINGERPRINT_MIN_SCORE = 0.62
+FINGERPRINT_MIN_MARGIN = 0.12
+
+
+def _fingerprint_summary(element: dict | None) -> str:
+    element = element or {}
+    parts = [str(element.get("tag") or "element")]
+    for key, label in (("label", "标签"), ("text", "文本"), ("grid", "坐标")):
+        value = element.get(key)
+        if value:
+            parts.append(f"{label}={value}")
+    return " ".join(parts)
+
+
+def resolve_by_fingerprint(
+    page: Page,
+    target: Target,
+    timeout_ms: int = 1_500,
+    *,
+    fallback_index: int = 0,
+) -> tuple[LocatorResolution | None, list[str]]:
+    """候选全失效时的通用退路：在实时 DOM 里按语义指纹找最像的元素。
+
+    不依赖任何站点框架，也不需要为新控件加候选类型。返回命中结果与诊断说明；
+    诊断说明无论成败都写进 tried，失败时能看出「最像的是谁、差多少」。
+    """
+    fingerprint = target.fingerprint
+    notes: list[str] = []
+    if fingerprint is None or fingerprint.is_empty():
+        return None, notes
+    payload = fingerprint.model_dump()
+    deadline = time.monotonic() + max(0.2, timeout_ms / 1000)
+    best_report: dict | None = None
+    while True:
+        try:
+            result = page.evaluate(
+                "([fp]) => (window.__atpFindByFingerprint"
+                " ? window.__atpFindByFingerprint(fp) : {ok: false, reason: 'no fn'})",
+                [payload],
+            )
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"fingerprint 评估失败：{type(exc).__name__}")
+            return None, notes
+        if isinstance(result, dict) and result.get("reason") == "no fn":
+            # 注入丢了：这时说「不够像」会把人带偏，直接点明缺脚本。
+            notes.append("页面未注入 locator_candidates.js，指纹解析不可用")
+            return None, notes
+        if isinstance(result, dict) and result.get("ok"):
+            score = float(result.get("score") or 0)
+            second = float(result.get("second") or 0)
+            if score >= FINGERPRINT_MIN_SCORE and (score - second) >= FINGERPRINT_MIN_MARGIN:
+                try:
+                    locator = page.locator(str(result.get("path") or "")).first
+                    if (
+                        locator.count()
+                        and locator.get_attribute("data-atp-hit") == str(result.get("token") or "")
+                    ):
+                        summary = _fingerprint_summary(result.get("element"))
+                        # 路径不依赖临时属性，认证完就清掉，避免污染页面 DOM。
+                        locator.evaluate("(el) => el.removeAttribute('data-atp-hit')")
+                        return (
+                            LocatorResolution(
+                                locator=locator,
+                                candidate=Candidate(
+                                    kind="fingerprint",
+                                    value=f"{summary}（相似度 {score:.2f}，次高 {second:.2f}）",
+                                ),
+                                fallback_index=fallback_index,
+                                tried=[],
+                                failed=[],
+                            ),
+                            notes,
+                        )
+                    notes.append("fingerprint 命中后核对失败：元素已被重绘")
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"fingerprint 命中后定位失败：{type(exc).__name__}")
+            else:
+                best_report = result
+        elif isinstance(result, dict):
+            best_report = result if result.get("matches") else best_report
+        if time.monotonic() >= deadline:
+            break
+        page.wait_for_timeout(150)
+    if best_report:
+        matches = best_report.get("matches") or []
+        head = "；".join(
+            f"{item.get('label') or item.get('text') or item.get('tag')} {item.get('score')}"
+            for item in matches[:3]
+        )
+        notes.append(
+            f"fingerprint 未达阈值（{FINGERPRINT_MIN_SCORE}），最像的：{head or '无'}"
+        )
+    else:
+        notes.append("fingerprint 未找到足够相似的元素")
+    return None, notes
+
+
 def resolve_target(
     page: Page,
     target: Target,
@@ -492,9 +593,28 @@ def resolve_target(
             failed=list(failed),
         )
 
+    # 无名 role 候选（role=textbox 但不知道是哪个）会命中的是「页面上第一个同类元素」。
+    # 有指纹的流程不需要它：留着它只会抢在指纹之前把值填到别的控件里，还报通过。
+    untrusted_role = bool(target.fingerprint)
+
+    # 指纹优先：它是语义匹配 + 双阈值，比录制时那条结构/类名路径更抗改版。
+    # 命中不到（指纹不够像）再走候选，候选顺序与旧流程完全一致。
+    fp_notes: list[str] = []
+    if target.fingerprint is not None:
+        fingerprint_hit, fp_notes = resolve_by_fingerprint(
+            page, target, timeout_ms=min(1_000, timeout_ms), fallback_index=0
+        )
+        if fingerprint_hit is not None:
+            fingerprint_hit.tried = list(fp_notes)
+            return fingerprint_hit
+
     # 已经在页面上的元素立刻点，不要让失效的首选空等数秒。
     for index, candidate in enumerate(ordered):
         description = candidate.describe()
+        if untrusted_role and candidate.kind == "role" and not candidate.name:
+            tried.append(description + " (无名 role 不可信，有指纹时跳过)")
+            _record(candidate)
+            continue
         if candidate_key(candidate) in skipped:
             tried.append(description + " (已试过，点不动)")
             _record(candidate)
@@ -520,6 +640,10 @@ def resolve_target(
 
     for index, candidate in enumerate(ordered):
         description = candidate.describe()
+        if untrusted_role and candidate.kind == "role" and not candidate.name:
+            tried.append(description + " (无名 role 不可信，有指纹时跳过)")
+            _record(candidate)
+            continue
         if candidate_key(candidate) in skipped:
             tried.append(description + " (已试过，点不动)")
             _record(candidate)
@@ -547,6 +671,21 @@ def resolve_target(
             index,
         )
         return _hit(candidate, matched, original_index)
+
+    # 候选全失效：再用指纹找一次（可能页面在这一轮里才渲染出来）。
+    # 这次是兜底命中，按「自愈」报，不写回候选。
+    healed, notes = resolve_by_fingerprint(
+        page,
+        target,
+        timeout_ms=max(800, min(1_500, timeout_ms)),
+        fallback_index=len(target.candidates),
+    )
+    tried.extend(fp_notes)
+    tried.extend(notes)
+    if healed is not None:
+        healed.tried = tried
+        healed.failed = list(failed)
+        return healed
 
     raise TargetNotFound(tried, failure_kind)
 
@@ -747,6 +886,29 @@ def _is_selected_option(item) -> bool:
     except Exception:
         return False
     return False
+
+
+_JS_PANEL_TAG_SELECTED = """(el) => {
+  const chip = (el.closest && el.closest('.el-tag')) || el;
+  const cls = String((chip && chip.className) || '');
+  if (/(^|\\s)(is-selected|selected|is-checked)(\\s|$)/.test(cls)) return true;
+  if (chip.getAttribute && chip.getAttribute('aria-selected') === 'true') return true;
+  // Oinone 的色板/尺码面板：未选是 el-tag--info，选中换成 el-tag--primary。
+  return /(^|\\s)el-tag--primary(\\s|$)/.test(cls) && !/(^|\\s)el-tag--info(\\s|$)/.test(cls);
+}"""
+
+
+def _is_selected_panel_tag(item) -> bool:
+    """面板里的色板/尺码 tag 是不是已经选中。
+
+    选中态挂在外层 `.el-tag` 上（`--info` 变 `--primary`），而 `_PANEL_TAG`
+    定位到的是里面的 `.el-tag__content`，所以要往上找最近一层 `.el-tag`。
+    多选面板里再点一次已选项会把它**取消**——141 上连续四次「改选」把尺码全点没了。
+    """
+    try:
+        return bool(item.evaluate(_JS_PANEL_TAG_SELECTED))
+    except Exception:
+        return False
 
 
 _DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -1008,11 +1170,20 @@ _JS_PANEL_CLICK = """(root, opts) => {
   }
   const sizeTags = Array.from(root.querySelectorAll('.sizeTag .el-tag'));
   const sizeNames = new Set(sizeTags.map(labelOf).filter(Boolean));
+  const isSelected = (el) => {
+    const chip = (el.closest && el.closest('.el-tag')) || el;
+    const cls = String((chip && chip.className) || '');
+    if (/(^|\\s)(is-selected|selected|is-checked)(\\s|$)/.test(cls)) return true;
+    if (chip.getAttribute && chip.getAttribute('aria-selected') === 'true') return true;
+    return /(^|\\s)el-tag--primary(\\s|$)/.test(cls) && !/(^|\\s)el-tag--info(\\s|$)/.test(cls);
+  };
   const clickNamed = (nodes) => {
     for (const el of nodes) {
       if (!shown(el) || labelOf(el) !== name) continue;
       const chip = el.classList.contains('is-closable') && !el.closest('.sizeTag');
       if (chip && sizeNames.has(name)) continue;
+      // 多选面板里再点一次已选项会取消选择：已经是目标状态，不用点。
+      if (isSelected(el)) return true;
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       el.click();
       return true;
@@ -1073,12 +1244,18 @@ def _is_size_duplicate_chip(item, panel, name: str) -> bool:
     return False
 
 
-def _click_visible_named(loc, name: str, timeout_ms: int, *, panel=None) -> bool:
+def _click_visible_named(
+    loc, name: str, timeout_ms: int, *, panel=None, deadline: float | None = None
+) -> bool:
     try:
         total = loc.count()
     except Exception:
         return False
     for index in range(total):
+        # 面板可能有几十个尺码/颜色；每次点击都可能吃满 timeout，逐个给一遍会
+        # 把「一次选择」拖成项数 × timeout。deadline 是调用方的总预算。
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
         item = loc.nth(index)
         try:
             if not item.is_visible():
@@ -1087,8 +1264,14 @@ def _click_visible_named(loc, name: str, timeout_ms: int, *, panel=None) -> bool
                 continue
             if panel is not None and _is_size_duplicate_chip(item, panel, name):
                 continue
-            item.scroll_into_view_if_needed(timeout=800)
-            item.click(timeout=min(2_000, timeout_ms))
+            # 已经是选中态：再点一次会把选择取消，按「已是目标状态」算命中。
+            if _is_selected_panel_tag(item):
+                return True
+            click_ms = min(2_000, timeout_ms)
+            if click_ms <= 0:
+                return False
+            item.scroll_into_view_if_needed(timeout=min(800, click_ms))
+            item.click(timeout=click_ms)
             return True
         except Exception:
             continue
@@ -1100,38 +1283,59 @@ def pick_panel_choice(page: Page, name: str, *, kind: str = "tag", timeout_ms: i
 
     不能用 get_by_text().first：隐藏 pane 里的「S」排在 DOM 前面时，
     回放会点到未激活的标签，步骤显示通过，字段却仍是空的。
+
+    **`timeout_ms` 是整次选择的总预算，不是每次尝试的预算。** 141 上当前 tab 找不到
+    就挨个切 tab 全量重扫，每切一个 tab 还要发请求拉该 tab 的尺码表；按每次尝试给满
+    预算，一次选择会被 tab 数乘成几百秒（实测单步 305s/361s/243s）。
     """
     if not name:
         return None
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+
+    def left() -> int:
+        return max(0, int((deadline - time.monotonic()) * 1000))
+
+    def settle() -> None:
+        wait_ms = min(200, left())
+        if wait_ms <= 0:
+            return
+        try:
+            page.wait_for_timeout(wait_ms)
+        except Exception:
+            pass
+
     panel = _visible_dropdown_panel(page)
     if panel is None:
         return None
     tabs = panel.locator(_PANEL_TAB_HOST)
     if kind == "tab":
-        if _js_panel_click(panel, name, "tab") or _click_visible_named(tabs, name, timeout_ms):
-            try:
-                page.wait_for_timeout(200)
-            except Exception:
-                pass
+        if _js_panel_click(panel, name, "tab") or _click_visible_named(
+            tabs, name, left(), deadline=deadline
+        ):
+            settle()
             return name
         return None
     if _js_panel_click(panel, name, "tag"):
         return name
-    if _click_visible_named(panel.locator(_PANEL_SIZE_TAG), name, timeout_ms):
+    if _click_visible_named(panel.locator(_PANEL_SIZE_TAG), name, left(), deadline=deadline):
         return name
-    if _click_visible_named(panel.locator(_PANEL_OPTION_TAG), name, timeout_ms, panel=panel):
+    if _click_visible_named(
+        panel.locator(_PANEL_OPTION_TAG), name, left(), panel=panel, deadline=deadline
+    ):
         return name
-    if _js_panel_click(panel, name, "tab") or _click_visible_named(tabs, name, timeout_ms):
-        try:
-            page.wait_for_timeout(200)
-        except Exception:
-            pass
+    if _js_panel_click(panel, name, "tab") or _click_visible_named(
+        tabs, name, left(), deadline=deadline
+    ):
+        settle()
         return name
     try:
         tab_count = tabs.count()
     except Exception:
         tab_count = 0
     for index in range(tab_count):
+        # 预算用完就收手：剩下的 tab 不可能再给出「这项在选择里」的证据。
+        if left() <= 0:
+            break
         tab = tabs.nth(index)
         try:
             if not tab.is_visible():
@@ -1139,15 +1343,22 @@ def pick_panel_choice(page: Page, name: str, *, kind: str = "tag", timeout_ms: i
             cls = (tab.get_attribute("class") or "").split()
             if "is-active" in cls:
                 continue
-            tab.click(timeout=min(2_000, timeout_ms))
-            page.wait_for_timeout(200)
+            click_ms = min(2_000, left())
+            if click_ms <= 0:
+                break
+            tab.click(timeout=click_ms)
+            settle()
         except Exception:
             continue
         if _js_panel_click(panel, name, "tag"):
             return name
-        if _click_visible_named(panel.locator(_PANEL_SIZE_TAG), name, timeout_ms):
+        if _click_visible_named(
+            panel.locator(_PANEL_SIZE_TAG), name, left(), deadline=deadline
+        ):
             return name
-        if _click_visible_named(panel.locator(_PANEL_OPTION_TAG), name, timeout_ms, panel=panel):
+        if _click_visible_named(
+            panel.locator(_PANEL_OPTION_TAG), name, left(), panel=panel, deadline=deadline
+        ):
             return name
     return None
 
@@ -1256,7 +1467,14 @@ def _pick_next_by_keyboard(page: Page, skip_norm: set[str]) -> str | None:
     return label
 
 
-def _click_first_match(loc, skip_norm: set[str], timeout_ms: int) -> str | None:
+def _click_first_match(
+    loc,
+    skip_norm: set[str],
+    timeout_ms: int,
+    *,
+    skip_active: bool = False,
+    skip_selected: bool = False,
+) -> str | None:
     try:
         total = loc.count()
     except Exception:
@@ -1266,14 +1484,47 @@ def _click_first_match(loc, skip_norm: set[str], timeout_ms: int) -> str | None:
         try:
             if not item.is_visible():
                 continue
-            cls = item.get_attribute("class") or ""
-            if "is-disabled" in cls.split() or "disabled" in cls.split():
+            cls = (item.get_attribute("class") or "").split()
+            if "is-disabled" in cls or "disabled" in cls:
+                continue
+            # 已激活的 tab 再点一次什么都不会发生，不能把它当成「换了一屏」报通过。
+            if skip_active and "is-active" in cls:
+                continue
+            # 已选中的色板/尺码再点一次会取消选择，不能拿它来「补一项」。
+            if skip_selected and _is_selected_panel_tag(item):
                 continue
             label = (item.inner_text(timeout=400) or "").strip().split("\n")[0].strip()
             if not label or label in _SKIP_OPTION_LABELS or label in skip_norm:
                 continue
             item.scroll_into_view_if_needed(timeout=800)
             item.click(timeout=min(2_000, timeout_ms))
+            return label
+        except Exception:
+            continue
+    return None
+
+
+def _first_matching_label(loc, skip_norm: set[str]) -> str | None:
+    """只看不点：返回第一个可用项的文案。
+
+    兜底时如果面板里的项**全部**已是选中态，字段本来就有值，再点只会取消，
+    这时用它确认「已有一项被选中」而不是判失败。
+    """
+    try:
+        total = loc.count()
+    except Exception:
+        return None
+    for index in range(total):
+        item = loc.nth(index)
+        try:
+            if not item.is_visible():
+                continue
+            cls = (item.get_attribute("class") or "").split()
+            if "is-disabled" in cls or "disabled" in cls:
+                continue
+            label = (item.inner_text(timeout=400) or "").strip().split("\n")[0].strip()
+            if not label or label in _SKIP_OPTION_LABELS or label in skip_norm:
+                continue
             return label
         except Exception:
             continue
@@ -1293,7 +1544,9 @@ def pick_any_panel_choice(
         return None
     skip_norm = {str(item).strip() for item in (skip or []) if item and str(item).strip()}
     if kind == "tab":
-        picked = _click_first_match(panel.locator(_PANEL_TAB), skip_norm, timeout_ms)
+        picked = _click_first_match(
+            panel.locator(_PANEL_TAB), skip_norm, timeout_ms, skip_active=True
+        )
         if picked:
             try:
                 page.wait_for_timeout(200)
@@ -1301,9 +1554,14 @@ def pick_any_panel_choice(
                 pass
         return picked
     if kind in {"tag", "any"}:
-        picked = _click_first_match(panel.locator(_PANEL_TAG), skip_norm, timeout_ms)
+        tag_loc = panel.locator(_PANEL_TAG)
+        picked = _click_first_match(tag_loc, skip_norm, timeout_ms, skip_selected=True)
         if picked:
             return picked
+        # 项都已经是选中态：字段里有值，再点只会取消，确认即可。
+        already = _first_matching_label(tag_loc, skip_norm)
+        if already:
+            return already
     if kind in {"any", "option"}:
         picked = pick_first_dropdown_option(page, skip=skip_norm, timeout_ms=timeout_ms)
         if picked:

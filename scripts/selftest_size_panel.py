@@ -1,5 +1,8 @@
 """尺码面板：S/M/L 在未激活 tab 里时，不能点 DOM 里第一个隐藏「S」。
 
+最后一个场景是总预算：tab 遍历不能把「每次尝试的 timeout」乘以 tab 数。
+141 上每切一个 tab 还要发请求拉尺码表，没有总预算时单步能跑几百秒。
+
 录制要点：点字母尺码应记下所在 tab + 可见 sizeTag，不要录成已选 is-closable 芯片。
 
 用法：python scripts/selftest_size_panel.py
@@ -7,6 +10,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -86,6 +90,37 @@ COLOR_PAGE = """<!doctype html>
     </div>
   </div>
 </div>
+</body></html>
+"""
+
+# 10 个 tab，每次切换阻塞 400ms：模拟 141「切 tab 要发请求拉尺码表」的形态。
+SLOW_TABS_PAGE = """<!doctype html>
+<html><body>
+<div class="el-select-dropdown" style="position:fixed;top:8px;left:8px;background:#fff;border:1px solid #ddd;padding:8px">
+  <div class="el-tabs__header">
+    <div class="el-tabs__item" id="t0">tab0</div>
+    <div class="el-tabs__item" id="t1">tab1</div>
+    <div class="el-tabs__item" id="t2">tab2</div>
+    <div class="el-tabs__item" id="t3">tab3</div>
+    <div class="el-tabs__item" id="t4">tab4</div>
+    <div class="el-tabs__item" id="t5">tab5</div>
+    <div class="el-tabs__item" id="t6">tab6</div>
+    <div class="el-tabs__item" id="t7">tab7</div>
+    <div class="el-tabs__item" id="t8">tab8</div>
+    <div class="el-tabs__item" id="t9">tab9</div>
+  </div>
+  <div class="select-options">
+    <span class="el-tag"><span class="el-tag__content">红色</span></span>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.el-tabs__item').forEach(function (tab) {
+  tab.addEventListener('click', function () {
+    const end = Date.now() + 400;
+    while (Date.now() < end) {}
+  });
+});
+</script>
 </body></html>
 """
 
@@ -228,6 +263,17 @@ def main() -> int:
         color_texts = page.evaluate("() => (window.__atpEvents || []).map((e) => e.text)")
         _assert(color_texts.count("黄色") >= 1, f"应录下黄色，实际 {color_texts}")
         _assert("青色" in color_texts, f"第二色应录青色，实际 {color_texts}")
+
+        # 找不到的项 + 10 个慢 tab：总预算必须约束遍历，不能被 tab 数乘成几秒。
+        page.set_content(SLOW_TABS_PAGE)
+        started = time.monotonic()
+        missing = pick_panel_choice(page, "不存在的颜色", kind="tag", timeout_ms=800)
+        elapsed = time.monotonic() - started
+        _assert(missing is None, f"找不到的项应返回 None，实际 {missing}")
+        _assert(
+            elapsed < 3.0,
+            f"timeout_ms 应是总预算而不是每次尝试的预算，实际耗时 {elapsed:.1f}s",
+        )
         browser.close()
     print("selftest_size_panel ok")
     return 0

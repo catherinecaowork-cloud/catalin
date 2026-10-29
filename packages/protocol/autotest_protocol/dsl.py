@@ -41,7 +41,10 @@ ACTIONS: tuple[str, ...] = (
 )
 
 CandidateKind = Literal[
-    "testid", "field", "matrix", "role", "label", "placeholder", "text", "css"
+    "testid", "field", "matrix", "role", "label", "placeholder", "text", "css",
+    # 指纹自愈命中。不是选择器，回放时由引擎在实时 DOM 里按相似度重算；
+    # 只在报告里出现，不写回 target.candidates。
+    "fingerprint",
 ]
 
 # 定位方式的稳定性排序，数字越小越优先。
@@ -55,6 +58,7 @@ CANDIDATE_STABILITY: dict[str, int] = {
     "placeholder": 4,
     "text": 5,
     "css": 6,
+    "fingerprint": 2,
 }
 
 AssertKind = Literal[
@@ -103,6 +107,48 @@ class TargetScope(BaseModel):
     path: str | None = None
 
 
+class Fingerprint(BaseModel):
+    """元素指纹：录制当下从元素与邻域抽出的语义特征，不是选择器。
+
+    回放时首选候选全部失效，执行器拿它在实时 DOM 里按相似度找最像的元素。
+    所有字段都与站点框架无关（role / 标签文本 / 邻近锚点 / 表格行列），
+    所以新页面、新控件不需要改代码。
+    """
+
+    tag: str | None = None
+    role: str | None = None
+    # 可访问名（aria-label / aria-labelledby / label[for] / 包裹 label）
+    name: str | None = None
+    # 同格标签，如 Oinone 的 .label 兄弟节点
+    label: str | None = None
+    placeholder: str | None = None
+    # 元素自身的可见文本（按钮、标签、选项）
+    text: str | None = None
+    # 稳定属性：name / type / title / aria-* / data-*（排掉框架临时属性）
+    attrs: dict[str, str] = Field(default_factory=dict)
+    # 所在区块/浮层标题，用来区分同名控件
+    section: str | None = None
+    # 表格坐标：行标签 × 列头。列头分离的表格（vxe）也支持
+    grid_row: str | None = None
+    grid_col: str | None = None
+    # 同签名兄弟中的序号，仅作为最后的弱特征
+    index: int | None = None
+    # 录制时的唯一结构路径，只用于诊断，不参与打分
+    path_hint: str | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            (
+                self.role,
+                self.name,
+                self.label,
+                self.placeholder,
+                self.text,
+                self.grid_col,
+            )
+        )
+
+
 class Target(BaseModel):
     """定位目标：一组候选，不是单一选择器。
 
@@ -116,6 +162,8 @@ class Target(BaseModel):
     widget: str | None = None
     panel: str | None = None
     trigger_css: str | None = None
+    # 候选全部失效时的通用退路；旧流程没有这个字段，行为不变。
+    fingerprint: Fingerprint | None = None
 
     def ordered(self) -> list[Candidate]:
         # 列表顺序就是回放顺序。学习写回后不再按「理论稳定性」重排，

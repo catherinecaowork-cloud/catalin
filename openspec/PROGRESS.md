@@ -5,6 +5,149 @@
 
 ---
 
+## 2026-10-27（定位层换成语义指纹：不再按站点/控件加特例）
+
+### 一句话状态
+
+定位从「固定 8 种候选 + 站点特例」改成**语义指纹 + 相似度打分**：元素用
+角色/标签/占位符/文本/所在行格/所属分区等语义特征描述，候选全失效时在实时 DOM 里
+按相似度找回来，双阈值（≥0.62 且领先第二名 ≥0.12）不满足就失败，绝不猜。
+**141 真站端到端验证：候选故意全写废的 4 个 PO 卡片控件全部靠指纹命中并通过；旧流程 36/36 全绿。**
+
+### 为什么改
+
+上一轮的做法是「碰到认不出的控件就加一种候选 kind / 加一段站点特例」，等于每见一个没见过的
+元素改一次代码——那不是测试平台该有的形态。用户要求的是 Katalon 式的通用录制回放：
+**没见过的页面、改过版的控件也要能跑，而不是每个站点配一套补丁。**
+
+### 做了什么
+
+1. **协议**（`dsl.py`）：新增 `Fingerprint` 模型与 `Target.fingerprint`（旧流程没有该字段，
+   行为完全不变）；`CandidateKind` 增加 `fingerprint`，仅用于展示命中来源。
+2. **页面侧**（`locator_candidates.js`）：`fingerprintOf(el)` 产出语义描述，
+   `fpScoreOf` 按特征权重算相似度，`__atpFindByFingerprint` 扫描可见元素、排序、
+   打临时 `data-atp-hit` 标记；vxe 一类「表头与表体是两张 table」的表格按列头文本对齐列名。
+3. **解析**（`locator.py`）：`resolve_by_fingerprint` 做轮询+双阈值+命中后 token 核对（防元素重绘点错）；
+   `resolve_target` 改为**指纹优先**，有指纹时跳过无名 `role` 候选（`role=textbox` 会命中页面第一个输入框，
+   静默错填），候选失败后再用指纹兜一次。
+4. **回放注入**（`session.py`）：`locator_candidates.js` 改成上下文级 `add_init_script`。
+   之前只有录制/踩点注入，回放页面里没有 `__atpFindByFingerprint`，指纹退路等于没接。
+5. **落库**（`compiler.py` / `domain/recordings.py`）：录制结果一路保留 `fingerprint`，保存校验不丢字段。
+
+### 验证
+
+- `pytest tests/` → **71 passed，252.6s**，含新增 `test_fingerprint_resolve.py`（列换序+类名重生成、同款控件旁置、
+  指纹相同的两个元素必须拒绝、指纹优先于无名 role、晚渲染元素的兜底自愈）、`test_recorded_fingerprint.py`（录制→编译→保存）、
+  `test_session_locator_injection.py`（导航后页面必须有指纹函数）
+- 141 真站回归（同一份「新建款式」，单进程串行）：`73bb8a1c` **passed，36/36，282.9s，零漂移**
+- 141 真站端到端自愈（新流程 `b7c9d4e1`，卡片 4 个控件的候选全写成已删除的选择器）：
+  `6c78c8d8` **passed 16/16**——PO单号 1.00、数量格 155/80A 1.00（次高 0.71）、
+  160/84A 1.00（次高 0.71，与上一格区分开）、国家/地区 0.75（次高 0.58）、新增按钮 1.00
+- 全程未点保存，没有往 141 写数据
+
+### 踩到的坑
+
+- **fingerprint 优先命中时不报 drift**：这是有意的——指纹是这些步骤的首选，不是「兜底撞上」。
+  真正需要看见的「候选全废 → 指纹找回」由兜底路径给出，措辞为「定位自愈：…」。
+- **回放注入**：只在录制/踩点注入会让自愈在回放时静默失效（`no fn` 时现在会明说缺脚本，
+  而不是含糊地报「不够像」）。
+- 抓「带回」之前要先把**打开款式弹窗**那一步描述成步骤；原来用裸坐标点，回放时没人替它点。
+
+### 工作区状态
+
+`dsl.py`、`__init__.py`、`locator.py`、`locator_candidates.js`、`session.py`、`actions.py`、
+`compiler.py`、`domain/recordings.py`、`openspec/specs/locator-heal/spec.md`、本文件已改，**未提交**；
+`var/_capture_po_flow.py`、`var/_run_po_flow.py` 是本次的现场脚本（未纳入版本库）。
+
+### 下一步
+
+1. 用录制器真录一条 PO 卡片流程（不是手写候选），确认录出来的指纹在回放里同样命中
+2. 指纹阈值（0.62 / 0.12）目前只在 PO 卡片和单测里校准过，需要更多页面样本
+3. 指纹命中在步骤表 Object 列已能看到（`fingerprint='…（相似度 x，次高 y）'`），
+   但混在其它定位方式里不显眼；要扫读「哪些步骤是靠指纹自愈的」还得单独标一列/一个标记
+
+---
+
+## 2026-10-27（面板值 / tab 兜底 + `pick_panel_choice` 总预算）
+
+### 一句话状态
+
+面板里**录到的值不存在时改选一项**，不再直接跳过（tag 和 tab 都适用，跳过已选/已激活的）；
+`pick_panel_choice` 的 `timeout_ms` 从「每次尝试的预算」改成「整次选择的总预算」。
+**141 真站复跑整条通过：35 passed / 0 failed / 1 skipped，454.9s**
+（修复前 28/1/7、1089.4s）。本地自测与 pytest 全绿。
+
+### 做了什么
+
+1. **面板分支兜底**（`actions.py` 的 `_do_click`）：`pick_panel_choice` 找不到录到的项后，
+   先调 `pick_any_panel_choice` 在同类面板里选第一项，选到即 `passed`，说明写「没有「X」，已改选「Y」」。
+   口径与既定「下拉随便选一个就行，能选中就可以」一致，也符合「像人肉冒烟测试」的用法。
+   跳过会让必填字段空着，保存时才失败，报错还指向上一步（s31 就是这个形态）。
+2. **tab 也兜底**：录到的 tab 不存在时换一个**未激活**的 tab；`_click_first_match` 新增
+   `skip_active`，避免把「再点一次已激活 tab」这个空操作报成通过。
+3. **`empty_choice=True` 的语义收紧**：现在只有在兜底也选不到可用项后才会走到它，
+   注释已写明——原来面板里明明有别的颜色，也按「面板是空的」跳过。
+4. **`pick_panel_choice` 总预算**（`locator.py`）：函数入口算 `deadline`，tab 循环、
+   `_click_visible_named`、`wait_for_timeout` 全部用剩余预算；预算用完就收手。
+   `_click_visible_named` 新增 `deadline` 参数，逐个元素遍历时也检查。
+   **不再是每切一个 tab 给满一份 `timeout_ms`**，这是 141 单步 305s/361s/243s 的根因。
+5. **兜底不能重复点已选项**（真站第一次复跑后补的）：多选面板里再点一次已选项会**取消选择**。
+   新增 `_is_selected_panel_tag()`——选中态挂在外层 `.el-tag`（`--info` 变 `--primary`），
+   而 `_PANEL_TAG` 定位到的是里面的 `.el-tag__content`，要往上找最近一层。
+   兜底跳过已选项，全选中时确认字段有值、不再点；精确命中已选项时也不点。
+
+### 验证
+
+- `ruff check .` → All checks passed
+- `scripts/selftest_optional_skip.py` → 16 条断言全过：色板缺项改选「黄色」；
+  第二次兜底改选「青色」而不是重复点已选的「黄色」；已选项再点不取消；
+  tab 缺项改选「裤装」；已激活 tab 不被重复点击
+- `scripts/selftest_size_panel.py` → 新增「10 个 400ms 慢 tab + timeout_ms=800」场景：
+  **旧实现 12.7s 判失败，新实现 0.9s 通过**（已验证这条测试确实抓得住回归）
+- `scripts/selftest_click_effect.py` / `selftest_click_fallback.py` → 全过
+- `pytest tests/` → 61 passed
+
+### 141 真站验证
+
+同一份用例（flow `3a054f6f-…`），**单进程**（公司限制请求数）：
+
+| 运行 | 结论 | 通过 / 失败 / 跳过 | 时长 |
+| --- | --- | --- | --- |
+| 基线 `4f003a24`（10-19 前） | failed | 16 / 1 / 19 | 741.8s |
+| `f24d8868`（10-19 修复后） | failed | 28 / 1 / 7 | 1089.4s |
+| `1c50470a`（本轮第一次） | failed | 35 / 1 / 0 | 405.9s |
+| `a6c62de1`（第二次，worker 未重启） | failed | 35 / 1 / 0 | 434.2s |
+| `886999f3`（重启 worker 后） | **passed** | **35 / 0 / 1** | 454.9s |
+
+- s12「SAD BLUE」不在 141 主数据 → 改选「1」，passed。
+- s15–s18：155→155/80A、160→160/84A、165→165/88A、170→170/92A，各 9–12s
+  （原来三步合计 910s）。
+- s31 保存 passed（上两个版本都是这里 failed：先是「颜色 必填」，后来是「尺码 必填」）。
+- s10 品牌「Gucci」本轮 skipped：s9 把下拉打开了但里面没有选项，141 上已知的
+  「面板时有时无」抖动；品牌非必填，不影响保存。上一轮它兜底到「杰克」并 passed。
+- s2 本轮 passed：`cusAuthRbacRolePermissionProxyQuery` 的 toast 没触发，
+  **本次没有加任何临时屏蔽**。该部署问题仍在，下次仍可能撞上。
+
+### 踩到的坑
+
+**worker 是常驻进程，改了 `autotest_executor` 必须重启 worker。** 第二次复跑（`a6c62de1`）
+35/1/0 就是拿旧代码跑的：s16–s18 仍重复点「155/80A」，白跑 434s。
+重启后同一份代码才真正生效。
+
+### 工作区状态
+
+`actions.py`、`locator.py`、`scripts/selftest_optional_skip.py`、`scripts/selftest_size_panel.py`、
+本文件已改，**未提交**。`ruff` 干净，pytest 全绿，141 真站整条通过。
+
+### 下一步
+
+1. `choose` 兜底一步要 60–90s（s8 66s、s10 90s）：`pick_first_dropdown_option` 的搜索/滚动
+   循环值得按总预算收一下
+2. `pick_panel_choice` 切 tab 前的「这个名字有没有可能出现在别的 tab」预判（本次只加了总预算）
+3. 回 `locator-popup-fix` 第 6/7 节（选择器单一来源 / iframe 明确报不支持）
+
+---
+
 ## 2026-10-19（141 真站：修复「新建款式」的 Escape 关弹窗）
 
 ### 一句话状态

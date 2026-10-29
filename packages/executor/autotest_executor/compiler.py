@@ -149,6 +149,9 @@ def _clean_candidates(target: dict[str, Any] | None) -> dict[str, Any] | None:
         value = target.get(key)
         if value:
             cleaned[key] = value
+    fingerprint = target.get("fingerprint")
+    if isinstance(fingerprint, dict) and fingerprint:
+        cleaned["fingerprint"] = {k: v for k, v in fingerprint.items() if v not in (None, "", {})}
     return cleaned
 
 
@@ -335,6 +338,8 @@ def _stamp_widget_meta(target: dict[str, Any] | None, context: dict[str, Any] | 
         value = target.get(key) or ctx.get(key)
         if value:
             out[key] = value
+    if not out.get("fingerprint") and isinstance(ctx.get("fingerprint"), dict):
+        out["fingerprint"] = ctx["fingerprint"]
     return out
 
 

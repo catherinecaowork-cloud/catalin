@@ -16,6 +16,11 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from autotest_protocol import Job
 
 _PROBE_JS = (Path(__file__).resolve().parent / "probe.js").read_text(encoding="utf-8")
+# 指纹解析在页面内算分。回放时步骤里带着指纹，缺了这份脚本就只剩
+# 「候选全失效 → 找不到」，自愈形同虚设，所以在上下文层面无条件注入。
+_LOCATOR_JS = (Path(__file__).resolve().parent / "locator_candidates.js").read_text(
+    encoding="utf-8"
+)
 
 
 class HeadedNotSupported(RuntimeError):
@@ -72,12 +77,14 @@ class BrowserSession:
             launch_args: list[str] = []
         else:
             try:
-                from autotest_executor.browser.window_dock import get_work_area
+                from autotest_executor.browser.window_dock import compute_record_layout
 
-                work = get_work_area()
+                # 开窗一律按「带右侧录制面板」的尺寸起窗：登录阶段就是最终尺寸，
+                # 等面板打开时窗口不再跳动（141 的登录页在全屏宽下渲染不同，会登录失败）。
+                layout = compute_record_layout()
                 launch_args = [
-                    f"--window-position={work['left']},{work['top']}",
-                    f"--window-size={work['width']},{work['height']}",
+                    f"--window-position={layout['left']},{layout['top']}",
+                    f"--window-size={layout['main_width']},{layout['height']}",
                 ]
             except Exception:
                 launch_args = ["--window-position=0,0", "--window-size=1920,1040"]
@@ -98,6 +105,9 @@ class BrowserSession:
         if options.video != "off":
             context_kwargs["record_video_dir"] = str(self.artifacts_dir / "video")
         self._context = self._browser.new_context(**context_kwargs)
+
+        # 定位脚本同样按上下文注入：指纹解析要用，回放整页刷新也不能丢。
+        self._context.add_init_script(script=_LOCATOR_JS)
 
         if extra_headers:
             self._context.set_extra_http_headers(extra_headers)

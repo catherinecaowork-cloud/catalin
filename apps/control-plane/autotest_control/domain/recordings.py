@@ -60,5 +60,10 @@ def prepare_recorded_step(raw: dict[str, Any]) -> dict[str, Any]:
         value = target.get(key)
         if value:
             cleaned[key] = value
+    fingerprint = target.get("fingerprint")
+    if isinstance(fingerprint, dict):
+        compact = {k: v for k, v in fingerprint.items() if v not in (None, "", {}, [])}
+        if compact:
+            cleaned["fingerprint"] = compact
     data["target"] = cleaned
     return data

@@ -509,7 +509,30 @@ class ActionRunner:
                     "passed",
                     data={"matched": f"panel-{panel_kind}[{picked}]", "mode": "panel_choice"},
                 )
+            # 录到的值不在了、面板里还有别的值：按既定口径「能选中就可以」改选一项，
+            # 而不是直接跳过——跳过会让必填字段空着，保存时才失败，报错还指向上一步。
+            # tab 也一样：人肉测试遇到没有的分组会换一个点，继续往下走。
+            # 已激活的 tab 不算（再点一次什么都不会发生，不能报通过）。
+            fallback = pick_any_panel_choice(
+                self.session.page,
+                kind=panel_kind,
+                skip=[panel_name],
+                timeout_ms=min(3_000, step.timeout_ms),
+            )
+            if fallback:
+                return StepOutcome(
+                    step.id,
+                    step.action,
+                    "passed",
+                    f"没有「{panel_name}」，已改选「{fallback}」",
+                    data={
+                        "matched": f"panel-{panel_kind}[{fallback}]",
+                        "mode": "panel_any",
+                        "wanted": panel_name,
+                    },
+                )
             miss = f"面板里找不到「{panel_name}」"
+            # 走到这里说明面板里没有可用的项（兜底也点不到），按「空面板」处理。
             if self._should_skip_optional(step, empty_choice=True):
                 return self._skip_optional(step, miss)
             return StepOutcome(step.id, step.action, "failed", miss)
@@ -1513,9 +1536,12 @@ class ActionRunner:
         if resolution.drifted:
             # 措辞由 LocatorResolution 自己给：环境原因（浮层没出现 / 点不动）下的命中
             # 只是退到兜底撞上的，说成「首选失效」会让人去改本来没问题的候选。
-            outcome.drift = (
-                f"{resolution.drift_note}，命中第 {resolution.fallback_index + 1} 顺位 "
-                f"{resolution.candidate.describe()}"
-            )
+            if resolution.candidate.kind == "fingerprint":
+                outcome.drift = f"{resolution.drift_note}：{resolution.candidate.value}"
+            else:
+                outcome.drift = (
+                    f"{resolution.drift_note}，命中第 {resolution.fallback_index + 1} 顺位 "
+                    f"{resolution.candidate.describe()}"
+                )
         outcome.data["locator"] = resolution.candidate.describe()
         return outcome

@@ -116,17 +116,20 @@ def set_bounds(page: Page, left: int, top: int, width: int, height: int) -> None
 
 
 def apply_main_only_layout(main_page: Page) -> dict[str, int]:
-    """录制刚开始、右侧面板尚未打开时，主浏览器先铺满可用工作区。"""
-    work = get_work_area()
-    set_bounds(main_page, work["left"], work["top"], work["width"], work["height"])
+    """右侧面板尚未打开时，主浏览器先按「带面板」的最终尺寸就位。
+
+    不再铺满整个工作区：登录阶段就用带面板的尺寸，等录制面板打开时
+    窗口不再跳动（141 的登录页在全屏宽下渲染不同，会登录失败）。"""
+    layout = compute_record_layout()
+    set_bounds(main_page, layout["left"], layout["top"], layout["main_width"], layout["height"])
     main_page.wait_for_timeout(80)
     return {
-        "left": work["left"],
-        "top": work["top"],
-        "height": work["height"],
-        "main_width": work["width"],
+        "left": layout["left"],
+        "top": layout["top"],
+        "height": layout["height"],
+        "main_width": layout["main_width"],
         "panel_width": 0,
-        "panel_left": work["left"] + work["width"],
+        "panel_left": layout["left"] + layout["main_width"],
     }
 
 
