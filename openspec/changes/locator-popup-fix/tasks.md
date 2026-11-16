@@ -152,26 +152,27 @@
 - [x] 5.7 `pytest tests/ -q` → **57 passed**（49 + 8 新增）；`ruff check .` 干净；
       两个自测脚本全绿；`tsc --noEmit` 干净
 
-## 6. 选择器单一来源（P1）
+## 6. 选择器单一来源（P1）—— **已完成（本 PR）**
 
-- [ ] 6.1 在执行器侧建立通用定义（Ant Design / Element UI），作为唯一来源
-- [ ] 6.2 合并时取现有各份定义的**并集**并逐条核对；`DROPDOWN_OPTION` 的 disabled 过滤必须保留（取更严的那份）
-- [ ] 6.3 修掉已漂移的具体差异：`DROPDOWN_PANEL` 缺 `.ant-dropdown`；`STD_OPTION_SEL` 无 disabled 过滤、无 `[role=option]`
-- [ ] 6.4 `adapters/oinone/selectors.py` 只留厂商特例（`oio-` 等），通用件迁出
-- [ ] 6.5 `locator.py:20-32` 的导入随之改到新位置
-- [ ] 6.6 录制端 `locator_candidates.js` 与回放端共用同一份（JS 侧由注入传入，不再在 JS 里抄一份）
-- [ ] 6.7 确认 `locator_candidates.js:1-4` 头注释里「两处各写一份」的说法已随实现更新
+- [x] 6.1 在执行器侧建立通用定义（Ant Design / Element UI），作为唯一来源
+      —— `autotest_executor/ui_selectors.py`
+- [x] 6.2 合并时取现有各份定义的**并集**并逐条核对；`DROPDOWN_OPTION` 的 disabled 过滤必须保留（取更严的那份）
+- [x] 6.3 修掉已漂移的具体差异：`DROPDOWN_PANEL` 补上 `.ant-dropdown`；`STD_OPTION_SEL` 对齐 disabled + `[role=option]`
+- [x] 6.4 `adapters/oinone/selectors.py` 只留厂商特例（`oio-` 等）并 re-export 通用名；通用件迁出
+- [x] 6.5 `locator.py` / `actions.py` 的通用选择器导入改到 `ui_selectors`
+- [x] 6.6 录制端 `locator_candidates.js` 与回放端共用同一份（经 `locator_script.locator_init_script()` 注入 `__atpUiSelectors`）
+- [x] 6.7 确认 `locator_candidates.js` 头注释已改为「禁止再抄一份」
 
-## 7. iframe 记为不支持（P1）
+## 7. iframe 记为不支持（P1）—— **已完成（本 PR）**
 
-- [ ] 7.1 目标位于 iframe 内时明确报不支持，不产出偶发失败
-- [ ] 7.2 规格与 README 的「明确不支持」清单加入 iframe 内元素
+- [x] 7.1 目标位于 iframe 内时明确报不支持（`IframeNotSupported`），不产出偶发失败
+- [x] 7.2 规格与 README 的「明确不支持」清单已含 iframe 内元素（README 既有；本 PR 补运行时判定 + 测试）
 
 ## 8. 验收
 
-- [ ] 8.1 `pytest tests/ -q` 全绿（基线 45 passed）
-- [ ] 8.2 1.3 的定位相关 selftest 全绿
-- [ ] 8.3 真实站点重复执行浮层用例（福瑞丝 / 杰克，下拉、弹窗、日期各一）**连续 5 次全过**
-- [ ] 8.4 人为制造三类失败，确认报告分别标出「没找到」「找到但点不到」「点了没生效」
-- [ ] 8.5 确认环境原因造成的失败不产生修补任务、不删候选
-- [ ] 8.6 `openspec validate locator-popup-fix --strict` 通过
+- [x] 8.1 `pytest tests/ -q` 全绿（本 PR：**88 passed**；含本地浮层 fixture）
+- [x] 8.2 定位相关 selftest 全绿（经 `tests/test_selftests.py` 收编）
+- [ ] 8.3 真实站点重复执行浮层用例（福瑞丝 / 杰克）**连续 5 次全过** —— **依赖内网，本 PR 用本地 HTML 连续 3 轮替代闸门**
+- [x] 8.4 人为制造三类失败：本地 fixture 覆盖「浮层未出现 / 点了没生效 / iframe 不支持」；既有 selftest 覆盖「点不到」
+- [x] 8.5 环境原因造成的失败不产生修补任务、不删候选（既有 `test_locator_failure_kind` / learn selftest）
+- [ ] 8.6 `openspec validate locator-popup-fix --strict` —— 本环境无 openspec CLI，未跑

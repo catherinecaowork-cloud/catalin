@@ -10,24 +10,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from playwright.sync_api import Page, sync_playwright
 
 from autotest_executor.browser.locator import TargetNotFound, resolve_target
+from autotest_executor.browser.locator_script import locator_init_script
 from autotest_protocol import Candidate, Fingerprint, Target
 from autotest_protocol import dsl as dsl_module
 from tests.conftest import require_browser
 
-JS = (
-    Path(__file__).resolve().parents[1]
-    / "packages"
-    / "executor"
-    / "autotest_executor"
-    / "browser"
-    / "locator_candidates.js"
-)
+_LOCATOR_JS = locator_init_script()
 
 SPLIT_HEADER_TABLE = """
 <div class="vxe-table">
@@ -121,7 +113,7 @@ def browser():
 def _page(browser, html: str) -> Page:
     page = browser.new_page()
     page.set_content(html)
-    page.add_script_tag(path=str(JS))
+    page.evaluate(_LOCATOR_JS)
     return page
 
 
@@ -149,7 +141,7 @@ def test_grid_cell_survives_column_swap_and_class_rename(browser) -> None:
     assert fingerprint.grid_row == "1"
 
     page.set_content(SPLIT_HEADER_TABLE_SHUFFLED)
-    page.add_script_tag(path=str(JS))
+    page.evaluate(_LOCATOR_JS)
 
     resolution = resolve_target(page, _bogus_target(fingerprint), timeout_ms=800)
     assert resolution.candidate.kind == "fingerprint"
@@ -165,7 +157,7 @@ def test_oinone_label_survives_lookalike_control(browser) -> None:
     assert fingerprint.label == "国家/地区"
 
     page.set_content(OINONE_FORM_WITH_LOOKALIKE)
-    page.add_script_tag(path=str(JS))
+    page.evaluate(_LOCATOR_JS)
 
     resolution = resolve_target(page, _bogus_target(fingerprint), timeout_ms=800)
     assert resolution.candidate.kind == "fingerprint"
@@ -200,7 +192,7 @@ def test_label_survives_class_rename(browser) -> None:
         </div></div>
         """
     )
-    page.add_script_tag(path=str(JS))
+    page.evaluate(_LOCATOR_JS)
 
     healed = page.evaluate(
         "() => window.__atpFingerprint(document.querySelector('[data-mark=\"po\"]'))"
@@ -235,7 +227,7 @@ def test_grid_cell_does_not_borrow_form_label(browser) -> None:
     page.set_content(
         "<div class='add-po-info-wrap'>" + SPLIT_HEADER_TABLE_SHUFFLED + "</div>"
     )
-    page.add_script_tag(path=str(JS))
+    page.evaluate(_LOCATOR_JS)
     resolution = resolve_target(page, _bogus_target(fingerprint), timeout_ms=800)
     assert resolution.locator.get_attribute("data-mark") == "s155"
     page.close()

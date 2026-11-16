@@ -36,8 +36,10 @@ from autotest_executor.observer_collect import (
 )
 from autotest_protocol import Job, RecordingSummary, Step, new_event, new_observe_snapshot_event, new_record_action_event
 
+from autotest_executor.browser.locator_script import locator_init_script
+
 _BROWSER_DIR = Path(__file__).resolve().parent / "browser"
-_LOCATOR_JS = (_BROWSER_DIR / "locator_candidates.js").read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 _RECORDER_JS = (_BROWSER_DIR / "recorder.js").read_text(encoding="utf-8")
 _OBSERVER_SNAPSHOT_JS = (_BROWSER_DIR / "observer_snapshot.js").read_text(encoding="utf-8")
 

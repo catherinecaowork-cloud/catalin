@@ -16,11 +16,10 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from autotest_executor.browser.locator import pick_panel_choice
+from autotest_executor.browser.locator_script import locator_init_script
 
 _ROOT = Path(__file__).resolve().parents[1]
-_LOCATOR_JS = (
-    _ROOT / "packages/executor/autotest_executor/browser/locator_candidates.js"
-).read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 _RECORDER_JS = (
     _ROOT / "packages/executor/autotest_executor/browser/recorder.js"
 ).read_text(encoding="utf-8")

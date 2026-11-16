@@ -8,18 +8,14 @@ vxe-table 单元格包装 id 是随机 uuid，回放时必然失效。
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from playwright.sync_api import sync_playwright
 
 from autotest_executor.browser.locator import resolve_target
+from autotest_executor.browser.locator_script import locator_init_script
 from autotest_executor.compiler import compile_events
 from autotest_protocol import Target
 
-_LOCATOR_JS = (
-    Path(__file__).resolve().parents[1]
-    / "packages/executor/autotest_executor/browser/locator_candidates.js"
-).read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 
 PAGE = """
 <!doctype html><html><body>

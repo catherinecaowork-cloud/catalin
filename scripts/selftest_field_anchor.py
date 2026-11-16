@@ -15,18 +15,14 @@ Oinone 的 form-container 不给 data-name，标签是控件的亲兄弟：
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from playwright.sync_api import sync_playwright
 
 from autotest_executor.browser.locator import resolve_target
+from autotest_executor.browser.locator_script import locator_init_script
 from autotest_executor.compiler import compile_events
 from autotest_protocol import Target
 
-_LOCATOR_JS = (
-    Path(__file__).resolve().parents[1]
-    / "packages/executor/autotest_executor/browser/locator_candidates.js"
-).read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 
 
 def _cell(label: str, control: str, required: bool = True) -> str:

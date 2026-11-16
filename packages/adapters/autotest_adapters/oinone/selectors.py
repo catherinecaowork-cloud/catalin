@@ -1,21 +1,47 @@
-"""Oinone / Ant Design 选择器常量（从执行器内核搬出）。"""
+"""Oinone 厂商选择器 + 对通用浮层选择器的兼容再导出。
+
+Ant Design / Element UI 通用件的唯一来源是
+`autotest_executor.ui_selectors`；本模块只叠加 `oio-` 等厂商特例，
+并继续 re-export 通用名，避免旧 import 路径立刻断裂。
+"""
 
 from __future__ import annotations
 
 import re
 
-LIVE_MODAL = (
+from autotest_executor.ui_selectors import (
+    DROPDOWN_MIXED_VISIBLE as DROPDOWN_MIXED_VISIBLE,
+    DROPDOWN_ONLY_VISIBLE as DROPDOWN_ONLY_VISIBLE,
+    DROPDOWN_OPTION as DROPDOWN_OPTION,
+    DROPDOWN_OPTION_ACTIVE as DROPDOWN_OPTION_ACTIVE,
+    DROPDOWN_OPTION_MARKERS as DROPDOWN_OPTION_MARKERS,
+    DROPDOWN_PANEL as DROPDOWN_PANEL,
+    DROPDOWN_SCROLL_HOLDER as DROPDOWN_SCROLL_HOLDER,
+    DROPDOWN_SEARCH as DROPDOWN_SEARCH,
+    DROPDOWN_VIRTUAL_HOLDER as DROPDOWN_VIRTUAL_HOLDER,
+    DROPDOWN_WIDGETS as DROPDOWN_WIDGETS,
+    LIVE_MODAL as _LIVE_MODAL_GENERIC,
+    OPTION_BY_TITLE as OPTION_BY_TITLE,
+    PANEL_VISIBLE_DEFAULT as PANEL_VISIBLE_DEFAULT,
+    PANEL_VISIBLE_EL_SELECT as PANEL_VISIBLE_EL_SELECT,
+    PICKER_PANEL_VISIBLE as PICKER_PANEL_VISIBLE,
+    SELECT_TRIGGER_MARKERS as SELECT_TRIGGER_MARKERS,
+    is_select_trigger_css as is_select_trigger_css,
+    looks_like_dropdown_option as looks_like_dropdown_option,
+    panel_visible_selectors as panel_visible_selectors,
+)
+
+# Oinone 弹层挂在 ant-modal 外包一层 oio-wrapper；拼在通用 LIVE_MODAL 前面。
+OINONE_MODAL_SEL = (
     ".ant-modal-wrap.oio-modal-wrapper, "
     ".oio-modal-wrapper, "
-    ".ant-modal-wrap[role=dialog], "
-    ".ant-modal-content, "
-    "[role=dialog], "
-    "dialog[open], "
-    ".ant-drawer-content, "
-    ".el-dialog, "
     ".oio-modal"
 )
 
+LIVE_MODAL = f"{OINONE_MODAL_SEL}, {_LIVE_MODAL_GENERIC}"
+
+# 历史 LIVE_DROPDOWN 带 :visible；通用源不带（由 _try_root 判可见）。
+# 这里保持「oio 入口仍可用」的兼容面，回放内核已改读 ui_selectors。
 LIVE_DROPDOWN = (
     ".ant-select-dropdown:visible, .ant-dropdown:visible, "
     ".ant-picker-dropdown:visible, .ant-cascader-dropdown:visible, "
@@ -29,30 +55,6 @@ LIVE_DROPDOWN = (
     "[role=listbox]:visible"
 )
 
-DROPDOWN_PANEL = (
-    ".ant-select-dropdown:visible, .el-select-dropdown:visible, "
-    ".ant-cascader-dropdown:visible, .ant-cascader-menus:visible, "
-    ".el-popper.el-select__popper:visible, .el-select__popper:visible, "
-    "[role=listbox]:visible"
-)
-
-DROPDOWN_SEARCH = (
-    ".ant-select-open .ant-select-selection-search-input, "
-    ".ant-select-dropdown:visible input, "
-    ".el-select__popper:visible input, "
-    ".el-select-dropdown:visible input, "
-    "[role=listbox]:visible input"
-)
-
-DROPDOWN_OPTION = (
-    ".ant-select-item-option:not(.ant-select-item-option-disabled), "
-    ".ant-select-item:not(.ant-select-item-group):not(.ant-select-item-empty):not(.ant-select-item-option-disabled), "
-    ".el-select-dropdown__item:not(.is-disabled), "
-    "[role=option], "
-    ".ant-select-dropdown .ant-table-row, "
-    ".ant-dropdown-menu-item:not(.ant-dropdown-menu-item-disabled)"
-)
-
 FIELD_INPUT = (
     "input:not([type=hidden]):not([type=file]):not(.is-hidden):not(.ant-select-selection-search-input), "
     "textarea, "
@@ -60,29 +62,6 @@ FIELD_INPUT = (
     ".el-select__wrapper, "
     ".el-select, "
     "[contenteditable=true]"
-)
-
-DROPDOWN_OPTION_ACTIVE = (
-    ".ant-select-item-option-active:visible, "
-    ".el-select-dropdown__item.hover:visible, "
-    ".el-select-dropdown__item.is-hovering:visible, "
-    "[role=option][aria-selected=true]:visible"
-)
-
-DROPDOWN_VIRTUAL_HOLDER = (
-    ".rc-virtual-list-holder, .rc-virtual-list, .el-scrollbar__wrap, "
-    ".el-select-dropdown__wrap, .ant-table-body"
-)
-
-DROPDOWN_SCROLL_HOLDER = (
-    ".rc-virtual-list-holder, .rc-virtual-list, .el-scrollbar__wrap, "
-    ".el-select-dropdown__wrap"
-)
-
-OPTION_BY_TITLE = (
-    '.ant-select-item-option[title="{name}"], '
-    '.el-select-dropdown__item[title="{name}"], '
-    '[role=option][title="{name}"]'
 )
 
 SIDEBAR_MENU_ITEM = 'li.ant-menu-item[role="menuitem"][title="{name}"]'
@@ -109,12 +88,6 @@ DROPDOWN_POPPER_VISIBLE = (
     ".ant-select-dropdown:visible, [role=listbox]:visible, .el-select__popper:visible"
 )
 
-DROPDOWN_MIXED_VISIBLE = (
-    ".ant-select-dropdown:visible, .el-select-dropdown:visible, "
-    ".el-popper.el-select__popper:visible, .el-select__popper:visible, "
-    ".el-popper:visible, [role=listbox]:visible, .ant-dropdown:visible"
-)
-
 OVERLAY_VISIBLE = (
     ".ant-modal-wrap:visible, .ant-modal-content:visible, "
     ".oio-modal-wrapper:visible, [role=dialog]:visible, "
@@ -126,8 +99,6 @@ CLICKABLE_VISIBLE = (
 )
 
 SPINNER_VISIBLE = ".ant-spin-spinning:visible, .el-loading-mask:visible, .oio-spin:visible"
-
-DROPDOWN_ONLY_VISIBLE = ".ant-select-dropdown:visible"
 
 DROPDOWN_ALT_VISIBLE = (
     ".ant-dropdown:visible, "
@@ -328,15 +299,6 @@ JS_INSPECT_PANEL = """
 }
 """
 
-PANEL_VISIBLE_DEFAULT = (
-    ".ant-select-dropdown:visible, .el-select-dropdown:visible, .el-select__popper:visible, "
-    ".el-popper.el-select__popper:visible, .ant-dropdown:visible, [role=listbox]:visible"
-)
-
-PANEL_VISIBLE_EL_SELECT = (
-    ".el-select-dropdown:visible, .el-select__popper:visible, .el-popper.el-select__popper:visible"
-)
-
 OVERLAY_WAIT_VISIBLE = (
     ".ant-modal-wrap:visible, .ant-modal-content:visible, "
     ".oio-modal-wrapper:visible, [role=dialog]:visible, "
@@ -344,8 +306,6 @@ OVERLAY_WAIT_VISIBLE = (
     ".ant-drawer-content:visible, .el-drawer:visible"
 )
 
-DROPDOWN_OPTION_MARKERS = ("ant-select-item-option", "el-select-dropdown__item")
-SELECT_TRIGGER_MARKERS = ("el-select__wrapper", "ant-select-selector")
 _EPHEMERAL_CSS_STATE = (
     "is-focused",
     "is-focusing",
@@ -375,9 +335,7 @@ def sanitize_css_selector(value: str) -> str:
 
 
 DATE_PICKER_MARKERS = ("ant-picker-cell", "ant-picker-dropdown", "el-date-table", "el-date-editor")
-PICKER_PANEL_VISIBLE = ".ant-picker-dropdown:visible, .el-picker-panel:visible"
 DATE_PICKER_WIDGETS = frozenset({"ant-date-picker", "el-date-picker"})
-DROPDOWN_WIDGETS = frozenset({"el-select", "ant-select", "combobox"})
 
 # Oinone data-name → 界面中文名。录制/编译/观察者共用。
 FIELD_LABELS: dict[str, str] = {
@@ -405,26 +363,6 @@ def field_label(name: str) -> str:
     return FIELD_LABELS.get(name, name)
 
 
-def looks_like_dropdown_option(value: str) -> bool:
-    return any(marker in value for marker in DROPDOWN_OPTION_MARKERS)
-
-
 def looks_like_picker_date(value: str) -> bool:
     return any(marker in value for marker in DATE_PICKER_MARKERS)
-
-
-def is_select_trigger_css(value: str) -> bool:
-    return any(marker in value for marker in SELECT_TRIGGER_MARKERS) or (
-        value.endswith(".el-select") and "dropdown" not in value
-    )
-
-
-def panel_visible_selectors(panel: str) -> list[str]:
-    if "ant-select" in panel:
-        return [DROPDOWN_ONLY_VISIBLE]
-    if "el-select" in panel:
-        return list(PANEL_VISIBLE_EL_SELECT.split(", "))
-    if "listbox" in panel:
-        return ["[role=listbox]:visible"]
-    return list(PANEL_VISIBLE_DEFAULT.split(", "))
 

@@ -1,36 +1,22 @@
 // 定位候选计算。踩点和录制共用这一份。
 //
-// 两处各写一份迟早会漂移：录制时算出来的定位和回放时找的对不上，
-// 用例会以「偶发失败」的形式表现出来，极难查。
+// 浮层 / 下拉选择器的唯一来源是 Python 侧 ui_selectors.py，经 locator_script
+// 以 window.__atpUiSelectors 注入。这里不再抄一份——抄了就会再漂移。
 (() => {
+  const _S = globalThis.__atpUiSelectors;
+  if (!_S || !_S.PORTAL_SEL || !_S.STD_OPTION_SEL || !_S.STD_DROPDOWN_SEL) {
+    throw new Error(
+      'locator_candidates.js 需要先注入 window.__atpUiSelectors'
+      + '（请用 locator_script.locator_init_script()）'
+    );
+  }
   const ICON_TAGS = new Set(['SVG', 'PATH', 'USE', 'I']);
   const TESTID_ATTRS = ['data-testid', 'data-test-id', 'data-test'];
   const INNER_ATTRS = ['data-value', 'data-color', 'data-code', 'data-key', 'data-id', 'title', 'aria-label'];
   const ICON_TEXT = /^(pushpin|pin|menu|setting|settings|user|home|plus|search|bell|close|more|ellipsis|caret|arrow)$/i;
-  const STD_OPTION_SEL = '.ant-select-item-option, .el-select-dropdown__item';
-  const PORTAL_SEL = [
-    '.ant-select-dropdown:not(.ant-select-dropdown-hidden)',
-    '.ant-dropdown:not(.ant-dropdown-hidden)',
-    '.ant-picker-dropdown',
-    '.ant-cascader-dropdown',
-    '.ant-cascader-menus',
-    '.ant-mentions-dropdown',
-    '.ant-popover:not(.ant-popover-hidden)',
-    '.el-select-dropdown',
-    '.el-popper.el-select__popper',
-    '.el-select__popper',
-    '.el-color-dropdown',
-    '.el-popper.is-pure.el-select__popper',
-    '.el-popper:not(.is-pure)',
-    '[class*="color-picker"]',
-    '[class*="color-panel"]',
-  ].join(',');
-  const STD_DROPDOWN_SEL = [
-    '.ant-select-dropdown',
-    '.el-select-dropdown',
-    '.el-popper.el-select__popper',
-    '.el-select__popper',
-  ].join(',');
+  const STD_OPTION_SEL = _S.STD_OPTION_SEL;
+  const PORTAL_SEL = _S.PORTAL_SEL;
+  const STD_DROPDOWN_SEL = _S.STD_DROPDOWN_SEL;
 
   const classStr = (el) => (el && el.className && String(el.className)) || '';
 
