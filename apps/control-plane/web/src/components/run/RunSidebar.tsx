@@ -236,53 +236,62 @@ export function RunSidebarFoot({
 
   return (
     <div className="run-foot">
-      <FootHint>右键测试用例 →「前置流程配置」可多选前置脚本。</FootHint>
+      <div className="run-foot-section">
+        <div className="run-foot-section-title">执行</div>
+        <div className="run-foot-options">
+          <Switch
+            label="开窗执行"
+            checked={ctx.headed}
+            onChange={(event) => ctx.setHeaded(event.target.checked)}
+          />
+          <Switch
+            label="演练（跳过写数据）"
+            checked={ctx.dryRun}
+            onChange={(event) => ctx.setDryRun(event.target.checked)}
+          />
+        </div>
+        <div className="run-foot-actions">
+          <Button variant="go" disabled={!selectedFlow} onClick={onStartRun}>
+            运行所选
+          </Button>
+          <Button variant="go" disabled={pickedCount === 0} onClick={onStartPicked}>
+            运行勾选{pickedCount ? ` (${pickedCount})` : ""}
+          </Button>
+        </div>
+      </div>
 
-      <Switch
-        label="开窗执行"
-        checked={ctx.headed}
-        onChange={(event) => ctx.setHeaded(event.target.checked)}
-      />
-      <Switch
-        label="演练（跳过写数据）"
-        checked={ctx.dryRun}
-        onChange={(event) => ctx.setDryRun(event.target.checked)}
-      />
-
-      <Button variant="go" disabled={!selectedFlow} onClick={onStartRun}>
-        运行所选流程
-      </Button>
-      <Button variant="go" style={{ marginTop: 8 }} disabled={pickedCount === 0} onClick={onStartPicked}>
-        运行勾选
-      </Button>
-      <Button
-        variant="primary"
-        style={{ marginTop: 8 }}
-        disabled={pickedCount === 0}
-        onClick={() => setSuitePromptOpen(true)}
-      >
-        存成套件
-      </Button>
-      <Button
-        variant={promoteVariant}
-        style={{ marginTop: 8 }}
-        disabled={!selectedFlow}
-        onClick={() => {
-          if (!selectedFlow) return;
-          const toDraft = selectedFlow.status !== "draft";
-          ask({
-            title: toDraft ? "退回草稿" : "确认为用例",
-            message: toDraft
-              ? `将「${selectedFlow.name}」退回草稿？退回后才能删除。`
-              : `确认「${selectedFlow.name}」的步骤符合业务意图，将它标为用例？`,
-            variant: toDraft ? "warn" : "primary",
-            onConfirm: () => ctx.promoteFlow(selectedFlow),
-          });
-        }}
-      >
-        {promoteLabel}
-      </Button>
-      <FootHint>{hint}</FootHint>
+      <div className="run-foot-section">
+        <div className="run-foot-section-title">用例</div>
+        <div className="run-foot-actions">
+          <Button
+            variant="ghost"
+            disabled={pickedCount === 0}
+            onClick={() => setSuitePromptOpen(true)}
+          >
+            存成套件
+          </Button>
+          <Button
+            variant={promoteVariant === "warn" ? "warn" : "ghost"}
+            disabled={!selectedFlow}
+            onClick={() => {
+              if (!selectedFlow) return;
+              const toDraft = selectedFlow.status !== "draft";
+              ask({
+                title: toDraft ? "退回草稿" : "确认为用例",
+                message: toDraft
+                  ? `将「${selectedFlow.name}」退回草稿？退回后才能删除。`
+                  : `确认「${selectedFlow.name}」的步骤符合业务意图，将它标为用例？`,
+                variant: toDraft ? "warn" : "primary",
+                onConfirm: () => ctx.promoteFlow(selectedFlow),
+              });
+            }}
+          >
+            {promoteLabel}
+          </Button>
+        </div>
+        <FootHint>{hint}</FootHint>
+        <FootHint>右键用例可配置前置流程。</FootHint>
+      </div>
 
       <PromptModal
         open={suitePromptOpen}

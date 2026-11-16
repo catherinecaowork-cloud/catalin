@@ -98,54 +98,69 @@ export function RecordSidebarFoot() {
       {ctx.notes.map((note, index) => (
         <Alert key={index}>{note}</Alert>
       ))}
-      <Muted>编写路径：{ctx.compilePath}</Muted>
-      <Button variant="ghost" onClick={() => void ctx.retryCompile()}>
-        重新观察者编写
-      </Button>
-      <Button variant="ghost" style={{ marginTop: 8 }} onClick={() => void ctx.retryPolishCompile()}>
-        走润色编译
-      </Button>
-      {showFallback ? (
-        <Button variant="ghost" style={{ marginTop: 8 }} onClick={() => void ctx.useFallbackSteps()}>
-          采用样例轨迹
+
+      <div className="run-foot-section">
+        <div className="run-foot-section-title">保存</div>
+        <Muted>编写路径：{ctx.compilePath}</Muted>
+        <Field label="流程名称">
+          <Input
+            type="text"
+            value={ctx.flowName}
+            onChange={(event) => ctx.setFlowName(event.target.value)}
+          />
+        </Field>
+        <div className="run-foot-actions">
+          <Button
+            variant="primary"
+            disabled={!ctx.draftSteps.length}
+            onClick={() => void ctx.saveRecord()}
+          >
+            保存为流程
+          </Button>
+          <Button variant="ghost" onClick={ctx.cancelRecord}>
+            丢弃并重置
+          </Button>
+        </div>
+        {ctx.saveHint ? <FootHint>{ctx.saveHint}</FootHint> : null}
+      </div>
+
+      <div className="run-foot-section">
+        <div className="run-foot-section-title">断言</div>
+        <Field label="添加断言（text_contains）">
+          <Input
+            type="text"
+            value={assertText}
+            placeholder="页面上应出现的文字"
+            onChange={(event) => setAssertText(event.target.value)}
+          />
+        </Field>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            ctx.addAssert(assertText);
+            setAssertText("");
+          }}
+        >
+          添加断言步骤
         </Button>
-      ) : null}
-      <Field label="流程名称">
-        <Input
-          type="text"
-          value={ctx.flowName}
-          onChange={(event) => ctx.setFlowName(event.target.value)}
-        />
-      </Field>
-      <Field label="添加断言（text_contains）">
-        <Input
-          type="text"
-          value={assertText}
-          placeholder="页面上应出现的文字"
-          onChange={(event) => setAssertText(event.target.value)}
-        />
-      </Field>
-      <Button
-        variant="ghost"
-        onClick={() => {
-          ctx.addAssert(assertText);
-          setAssertText("");
-        }}
-      >
-        添加断言步骤
-      </Button>
-      <Button
-        variant="primary"
-        style={{ marginTop: 8 }}
-        disabled={!ctx.draftSteps.length}
-        onClick={() => void ctx.saveRecord()}
-      >
-        保存为流程
-      </Button>
-      <Button variant="ghost" style={{ marginTop: 8 }} onClick={ctx.cancelRecord}>
-        丢弃并重置
-      </Button>
-      {ctx.saveHint ? <FootHint>{ctx.saveHint}</FootHint> : null}
+      </div>
+
+      <div className="run-foot-section">
+        <div className="run-foot-section-title">重新编写</div>
+        <div className="run-foot-actions stacked">
+          <Button variant="ghost" onClick={() => void ctx.retryCompile()}>
+            重新观察者编写
+          </Button>
+          <Button variant="ghost" onClick={() => void ctx.retryPolishCompile()}>
+            走润色编译
+          </Button>
+          {showFallback ? (
+            <Button variant="ghost" onClick={() => void ctx.useFallbackSteps()}>
+              采用样例轨迹
+            </Button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
