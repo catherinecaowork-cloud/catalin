@@ -58,6 +58,9 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(
                 text("ALTER TABLE recording_compilation ADD COLUMN compile_mode VARCHAR(20) DEFAULT 'observer'")
             )
+        batch_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(batch)")).fetchall()}
+        if batch_cols and "environment_id" not in batch_cols:
+            conn.execute(text("ALTER TABLE batch ADD COLUMN environment_id VARCHAR(36)"))
 
 
 @contextmanager
