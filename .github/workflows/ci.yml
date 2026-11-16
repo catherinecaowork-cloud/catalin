@@ -1,0 +1,47 @@
+# GitHub Actions：单元测试与业务日闸分开。
+# 日闸默认走 --fixture，不依赖内网被测站；真站回归可在有 Worker 的环境跑 scripts/ci_daily_gate.py。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          pip install -e ".[dev]"
+          playwright install chromium
+      - name: Pytest (platform unit)
+        run: pytest tests/ -q --ignore=tests/test_ci_daily_gate.py
+
+  ci-daily-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Business gate (fixture, no intranet)
+        run: pytest tests/test_ci_daily_gate.py -q

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 
 _OPENAI_COMPLETIONS_PREFIXES = (
@@ -62,7 +63,39 @@ class Settings:
         self.heartbeat_offline_seconds = float(os.getenv("ATP_HEARTBEAT_OFFLINE_SECONDS", "60"))
         # 截图 / 录像只留最近 N 次运行；0 表示不自动删。
         self.artifact_keep_runs = int(os.getenv("ATP_ARTIFACT_KEEP_RUNS", "5"))
+        # 控制面写接口共享密钥；未设环境变量时首次启动生成并落盘。
+        self.api_token_path = Path(os.getenv("ATP_API_TOKEN_PATH", self.var_dir / "api.token"))
+        self.api_token = (os.getenv("ATP_API_TOKEN") or "").strip()
+        # Worker 注册码：没有它不能 register，避免任意机器领到身份后换凭证。
+        self.worker_register_code_path = Path(
+            os.getenv("ATP_WORKER_REGISTER_CODE_PATH", self.var_dir / "worker.register_code")
+        )
+        self.worker_register_code = (os.getenv("ATP_WORKER_REGISTER_CODE") or "").strip()
         self._bind_ai()
+        self.ensure_access_secrets()
+
+    def ensure_access_secrets(self) -> None:
+        """保证 API Token 与 Worker 注册码可用：环境变量优先，否则落盘生成。"""
+        self.ensure_dirs()
+        if not self.api_token:
+            self.api_token = self._load_or_create_secret(self.api_token_path)
+        if not self.worker_register_code:
+            self.worker_register_code = self._load_or_create_secret(self.worker_register_code_path)
+
+    @staticmethod
+    def _load_or_create_secret(path: Path) -> str:
+        if path.is_file():
+            value = path.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        value = secrets.token_urlsafe(32)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value + "\n", encoding="utf-8")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+        return value
 
     def ai_config_path(self) -> Path:
         return self.var_dir / "ai.json"

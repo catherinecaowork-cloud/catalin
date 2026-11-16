@@ -1,13 +1,20 @@
-"""命令行发起一次运行。CI 里也用这个入口。
+"""命令行发起一次运行。
 
 用法：python scripts/run_flow.py [流程名关键字] [--headed]
+
+日闸请用 scripts/ci_daily_gate.py（会等到终态并以退出码反映结果）。
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-import httpx
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from atp_http import control_client  # noqa: E402
 
 SERVER = "http://127.0.0.1:8910"
 
@@ -17,7 +24,7 @@ def main() -> int:
     headed = "--headed" in sys.argv
     keyword = args[0] if args else ""
 
-    client = httpx.Client(base_url=SERVER, timeout=30.0)
+    client = control_client(SERVER, timeout=30.0)
     flows = client.get("/api/v1/flows").raise_for_status().json()
     if not flows:
         print("没有流程，先跑 scripts/seed_demo.py")

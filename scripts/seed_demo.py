@@ -7,14 +7,19 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-import httpx
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from atp_http import control_client  # noqa: E402
 
 SERVER = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8910"
 
 
 def main() -> int:
-    client = httpx.Client(base_url=SERVER, timeout=30.0)
+    client = control_client(SERVER, timeout=30.0)
 
     existing = client.get("/api/v1/sites").raise_for_status().json()
     site = next((s for s in existing if s["name"] == "示例站点"), None)

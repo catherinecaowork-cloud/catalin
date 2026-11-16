@@ -192,6 +192,8 @@ def start_local_worker() -> dict:
     ]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    settings.ensure_access_secrets()
+    env["ATP_WORKER_REGISTER_CODE"] = settings.worker_register_code
     kwargs: dict = {
         "cwd": str(settings.var_dir.parent),
         "stdout": logf,

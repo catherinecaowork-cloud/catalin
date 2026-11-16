@@ -10,14 +10,26 @@ from autotest_control.models import Base
 from autotest_control.settings import settings
 from autotest_control.storage import prune_retained_runs
 
-_connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+engine = None
+SessionLocal = None
 
-engine = create_engine(settings.database_url, connect_args=_connect_args, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+
+def configure_engine(url: str | None = None) -> None:
+    """按当前 settings（或显式 URL）重建引擎。测试改 ATP_DATABASE_URL 后必须调用。"""
+    global engine, SessionLocal
+    database_url = url or settings.database_url
+    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    engine = create_engine(database_url, connect_args=connect_args, future=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+
+
+configure_engine()
 
 
 def init_db() -> None:
     settings.ensure_dirs()
+    if engine is None or SessionLocal is None:
+        configure_engine()
     Base.metadata.create_all(engine)
     _ensure_sqlite_columns()
     prune_retained_runs()

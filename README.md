@@ -52,13 +52,51 @@ cd ..\..\..
 python -m uvicorn autotest_control.main:app --host 127.0.0.1 --port 8910
 
 # 2) 执行器（首次自动注册，身份缓存在 var/worker/）
+# 注册码默认读 var/worker.register_code（控制面首次启动生成）
 runner worker --server http://127.0.0.1:8910 --name my-pc
 
-# 3) 造一个不需要登录的示例站点和两条流程
+# 3) 造一个不需要登录的示例站点和两条流程（脚本会自动带上 API Token）
 python scripts\seed_demo.py
 ```
 
 然后打开 <http://127.0.0.1:8910> ，选流程点「开始执行」。
+本机控制台会经 `/api/v1/auth/bootstrap` 拿到 API Token；写接口无 Token 会被拒。
+
+### 准入密钥（生产必设）
+
+控制面**写接口**需要共享 API Token；Worker **注册**需要预共享注册码。
+未设环境变量时，首次启动会写入 `var/`（已 gitignore）：
+
+| 用途 | 环境变量 | 默认落盘 |
+| --- | --- | --- |
+| 写 API | `ATP_API_TOKEN` | `var/api.token` |
+| Worker 注册 | `ATP_WORKER_REGISTER_CODE` | `var/worker.register_code` |
+
+```powershell
+# 生产建议显式设置，不要依赖落盘文件
+$env:ATP_API_TOKEN = "换成足够长的随机串"
+$env:ATP_WORKER_REGISTER_CODE = "换成另一串随机码"
+
+# 请求示例
+# Authorization: Bearer <ATP_API_TOKEN>
+# 或头：X-API-Token: <ATP_API_TOKEN>
+
+runner worker --server http://控制面:8910 --name ci-box --register-code $env:ATP_WORKER_REGISTER_CODE
+```
+
+凭证明文接口 `/credentials/{id}/material` 仅允许当前已领任务（leased/running）引用的凭证。
+
+### 日闸（业务回归，与单元测试分开）
+
+```powershell
+# 有控制面 + 在线 Worker 时：跑光 active 流程，失败非零退出
+python scripts\ci_daily_gate.py --server http://127.0.0.1:8910
+
+# 无内网 / CI 夹具：验证「故意失败的 active 流 → 非零」
+python scripts\ci_daily_gate.py --fixture broken
+```
+
+GitHub Actions / Gitee 流水线里 `ci-daily-gate` 作业与 `pytest` 分离；夹具不依赖被测内网。
 
 勾上「开窗执行」就能看见浏览器真的弹出来点页面。开窗和无头**跑的是同一份步骤、
 同一套断言**，只切 `headless`——否则 CI 的结论就不可信了。
