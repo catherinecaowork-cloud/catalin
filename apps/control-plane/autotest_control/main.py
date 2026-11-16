@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -49,7 +49,16 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def console() -> FileResponse:
-        return FileResponse(_console_index())
+        index = _console_index()
+        if not index.is_file():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "控制台前端未构建。请在 apps/control-plane/web 执行："
+                    "npm i && npm run build"
+                ),
+            )
+        return FileResponse(index)
 
     @app.get("/favicon.ico")
     def favicon() -> FileResponse:

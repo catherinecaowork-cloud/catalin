@@ -150,3 +150,13 @@ def detect_login_challenge(page_text: str) -> str | None:
         if hint.lower() in lowered:
             return hint
     return None
+
+
+def raise_if_login_challenge(page_text: str) -> None:
+    """页面文案命中不支持的登录挑战时明确失败，禁止假绿或拖到普通超时。"""
+    hint = detect_login_challenge(page_text)
+    if hint is None:
+        return
+    raise UnsupportedLoginChallenge(
+        f"检测到不支持的登录挑战（{hint}），本期不自动处理"
+    )

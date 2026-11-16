@@ -26,13 +26,23 @@ L1、CI、对象库和真站「现录」验收都放到下一期。见文末。
 
 ## 跑起来
 
-需要 Python 3.11+。
+需要 Python 3.11+，以及 Node.js 18+（只为构建控制台 SPA）。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 playwright install chromium
+```
+
+控制台是 Vite + React，构建产物不进仓库。裸克隆后先构建一次，否则打开
+`http://127.0.0.1:8910` 会得到 503「控制台前端未构建」：
+
+```powershell
+cd apps\control-plane\web
+npm i
+npm run build
+cd ..\..\..
 ```
 
 三个终端（或者前两个后台跑）：
@@ -226,14 +236,12 @@ python scripts\selftest_probe.py
 - **下一期**（按依赖顺序，见下节）
   - 真站「现录」验收：意图 → 录制 → 观察者/编译自证 → 保存 → 二次回放
   - CI 闸门：`active` 流程进流水线，失败非零退出
-  - 对象库：控件登记一次、多用例引用（现在定位还贴在每一步上）
+  - 对象库 Spy Web UI（API/派 job 解析已有；可视化捕捉与 Explorer 入库仍待）
   - L1 接口引擎：导 HAR / OpenAPI、变量提取、批量跑
 - 验证码、SSO、**iframe 内元素**明确不支持。
   iframe：回放发现目标只在子 frame 时会报 `IframeNotSupported`（不再伪装成偶发找不到）。
-  验证码/SSO 的**检测链路尚未接通**：`UnsupportedLoginChallenge`（`auth.py:17`）、
-  `detect_login_challenge`（`auth.py:147`）与两处 `except`（`recorder.py:238`、`runner.py:74`）都在，
-  但全仓没有任何 `raise` 点、`detect_login_challenge` 也无调用点——遇到验证码不会被识别为「不支持」，
-  而是继续跑到登录断言才失败。属于未接完的线，不是本轮清理造成的
+  登录路径已接通检测：命中验证码/滑块/双因素等文案会抛 `UnsupportedLoginChallenge`
+  （`reason=login_unsupported`），不再拖到普通登录超时假绿；**不自动破解**
 - `packages/adapters/oinone` 保留厂商特例（`oio-` 等）；Ant Design / Element UI 通用选择器
   已迁到 `autotest_executor/ui_selectors.py`，经 `locator_script` 注入录制/回放 JS
 

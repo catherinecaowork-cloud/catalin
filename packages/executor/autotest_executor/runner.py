@@ -14,6 +14,7 @@ from autotest_executor.auth import (
     UnsupportedLoginChallenge,
     build_material,
     form_login_steps,
+    raise_if_login_challenge,
 )
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
 from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
@@ -174,6 +175,9 @@ class RunExecutor:
             return outcome
 
         outcome = runner.run(resolved)
+        # 登录链任一步后扫页面：验证码/SSO 等必须变成 UnsupportedLoginChallenge，不能假绿。
+        if str(step.id).startswith("login."):
+            self._scan_login_challenge()
         elapsed = time.monotonic() - started
         if outcome.status != "failed":
             self._data.record_step_output(step.id, outcome.data)
@@ -290,6 +294,13 @@ class RunExecutor:
             outcome.message = f"{outcome.message}；{prefix}"
         else:
             outcome.message = prefix
+
+    def _scan_login_challenge(self) -> None:
+        try:
+            text = self.session.page.inner_text("body", timeout=1500)
+        except Exception:
+            return
+        raise_if_login_challenge(text or "")
 
     def _capture(self, name: str) -> str | None:
         path = self.artifacts_dir / f"{name}.png"

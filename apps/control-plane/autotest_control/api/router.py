@@ -7,6 +7,7 @@ from autotest_control.api import (
     ai,
     environments,
     flows,
+    objects,
     onboarding,
     recordings,
     runs,
@@ -18,6 +19,7 @@ from autotest_control.api import (
 router = APIRouter(prefix="/api/v1")
 router.include_router(sites.router)
 router.include_router(environments.router)
+router.include_router(objects.router)
 router.include_router(ai.router)
 router.include_router(flows.router)
 router.include_router(suites.router)

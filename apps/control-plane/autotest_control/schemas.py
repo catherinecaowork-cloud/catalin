@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from autotest_protocol import Step
+from autotest_protocol import Step, Target
 
 
 class SiteCreate(BaseModel):
@@ -340,3 +340,25 @@ class HealTaskOut(BaseModel):
     instruction: str
     patches: list[dict[str, Any]]
     applied_log: list[str] = []
+
+
+class UiObjectCreate(BaseModel):
+    key: str
+    name: str
+    target: Target
+
+
+class UiObjectUpdate(BaseModel):
+    key: str | None = None
+    name: str | None = None
+    target: Target | None = None
+
+
+class UiObjectOut(BaseModel):
+    id: str
+    site_id: str
+    key: str
+    name: str
+    target: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime

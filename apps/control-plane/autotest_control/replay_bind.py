@@ -14,6 +14,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autotest_control.chain import parse_steps
+from autotest_control.deps import Scope
+from autotest_control.domain.objects import (
+    ObjectNotFound,
+    ObjectResolveError,
+    load_site_object_map,
+    resolve_steps_objects,
+)
 from autotest_control.models import Credential, Flow, Site
 from autotest_protocol import AuthRef, Step
 
@@ -54,8 +61,24 @@ def rebase_steps(steps: list[Step], from_base: str, to_base: str) -> list[Step]:
     return rebound
 
 
+def _scope_for_flow(flow: Flow) -> Scope:
+    return Scope(
+        tenant_id=getattr(flow, "tenant_id", None) or "default",
+        project_id=getattr(flow, "project_id", None) or "default",
+    )
+
+
 def bind_flow_steps(session: Session, flow: Flow, site: Site) -> list[Step]:
     steps = parse_steps(getattr(flow, "steps", None))
+    # 对象库挂在流程所属站点（系统）上；跨环境回放仍解析同源对象定义。
+    object_site_id = getattr(flow, "site_id", None) or site.id
+    try:
+        objects = load_site_object_map(session, _scope_for_flow(flow), object_site_id)
+        steps = resolve_steps_objects(steps, objects)
+    except ObjectNotFound as exc:
+        raise ReplayBindError(f"流程引用了不存在的对象：{exc}") from exc
+    except ObjectResolveError as exc:
+        raise ReplayBindError(str(exc)) from exc
     origin = session.get(Site, flow.site_id)
     if origin is None:
         return steps

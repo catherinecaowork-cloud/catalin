@@ -18,6 +18,7 @@ from autotest_executor.auth import (
     UnsupportedLoginChallenge,
     build_material,
     form_login_steps,
+    raise_if_login_challenge,
 )
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
 from autotest_executor.browser.readiness import wait_for_app_ready
@@ -665,6 +666,7 @@ class RecordExecutor:
             total=total,
         )
         outcome = runner.run(step)
+        self._scan_login_challenge()
         self._emit(
             "step.end",
             step_id=step.id,
@@ -676,6 +678,13 @@ class RecordExecutor:
             screenshot=self._capture(f"login_{index:02d}_{step.id}"),
         )
         return outcome
+
+    def _scan_login_challenge(self) -> None:
+        try:
+            text = self.session.page.inner_text("body", timeout=1500)
+        except Exception:
+            return
+        raise_if_login_challenge(text or "")
 
     def _resolve_auth(self):
         payload = None
