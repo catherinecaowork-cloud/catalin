@@ -187,6 +187,26 @@ class RecordingCompilation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
+class UiObject(Base):
+    """站点对象库中的一个控件定义。
+
+    步骤通过 object_id 引用这里的 id；改 target 后，引用它的流程下次回放一起生效。
+    """
+
+    __tablename__ = "ui_object"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    project_id: Mapped[str] = mapped_column(String(36), index=True)
+    site_id: Mapped[str] = mapped_column(ForeignKey("site.id"), index=True)
+    # 站点内可读键，如 login.submit；与 id 并存，步骤引用仍用 id。
+    key: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200))
+    target: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
 class Suite(Base):
     """同一站点下有序的已确认用例清单。"""
 

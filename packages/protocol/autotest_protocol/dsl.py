@@ -213,6 +213,8 @@ class Step(BaseModel):
     phase: Phase | None = None
     label: str | None = None
     target: Target | None = None
+    # 对象库引用：控制面派 job 时用当前对象定义填 target；改对象定义即修多流程。
+    object_id: str | None = None
     value: str | None = None
     # 一等公民数据策略；有则优先于裸 value 字符串（裸 value 仍兼容 {{env:x}} 模板）
     value_strategy: DataStrategy | None = None
@@ -229,11 +231,14 @@ class Step(BaseModel):
     # 避免在共享测试环境里留脏数据。
     mutating: bool = False
 
+    def _has_locator(self) -> bool:
+        return self.target is not None or bool(self.object_id)
+
     @model_validator(mode="after")
     def _check_required_fields(self) -> Step:
         needs_target = {"click", "fill", "select", "choose", "scroll", "upload"}
-        if self.action in needs_target and self.target is None:
-            raise ValueError(f"动作 {self.action} 需要 target")
+        if self.action in needs_target and not self._has_locator():
+            raise ValueError(f"动作 {self.action} 需要 target 或 object_id")
         has_value = self.value is not None or self.value_strategy is not None
         if self.action in {"fill", "select", "choose", "scroll", "upload"} and not has_value:
             raise ValueError(f"动作 {self.action} 需要 value 或 value_strategy")
@@ -241,16 +246,16 @@ class Step(BaseModel):
             raise ValueError("动作 goto 需要 value 或 value_strategy（绝对地址或站点相对路径）")
         if self.action == "waitFor" and self.condition is None:
             raise ValueError("动作 waitFor 需要 condition")
-        if self.action == "waitFor" and self.condition in {"visible", "hidden"} and self.target is None:
-            raise ValueError(f"waitFor condition={self.condition} 需要 target")
+        if self.action == "waitFor" and self.condition in {"visible", "hidden"} and not self._has_locator():
+            raise ValueError(f"waitFor condition={self.condition} 需要 target 或 object_id")
         if self.action == "assert":
             if self.assert_kind is None:
                 raise ValueError("动作 assert 需要 assert_kind")
             has_expected = self.expected is not None or self.expected_strategy is not None
             if self.assert_kind != "no_page_error" and not has_expected:
                 raise ValueError(f"断言 {self.assert_kind} 需要 expected 或 expected_strategy")
-            if self.assert_kind in {"element_visible", "element_count"} and self.target is None:
-                raise ValueError(f"断言 {self.assert_kind} 需要 target")
+            if self.assert_kind in {"element_visible", "element_count"} and not self._has_locator():
+                raise ValueError(f"断言 {self.assert_kind} 需要 target 或 object_id")
         return self
 
     def display(self) -> str:
