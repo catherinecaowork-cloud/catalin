@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from autotest_protocol.data_strategy import EnvironmentRef
 from autotest_protocol.dsl import Flow
 
 JobKind = Literal["replay", "api", "inspect", "record"]
@@ -60,6 +61,8 @@ class Job(BaseModel):
     run_id: str
     kind: JobKind = "replay"
     site: SiteRef
+    # 同一 Site/System 下的具体环境；有则 base_url / data / 凭证以它为准
+    environment: EnvironmentRef | None = None
     auth: AuthRef = AuthRef()
     flow: Flow | None = None
     record_intent: str | None = None

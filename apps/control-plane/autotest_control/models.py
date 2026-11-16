@@ -21,16 +21,40 @@ class Base(DeclarativeBase):
 
 
 class Site(Base):
+    """被测系统（System）。同一系统下可挂多个 Environment。"""
+
     __tablename__ = "site"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(36), index=True)
     project_id: Mapped[str] = mapped_column(String(36), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    # 兼容旧数据：默认/主环境的 URL；有 Environment 行时以具体环境为准
     base_url: Mapped[str] = mapped_column(String(500))
     env: Mapped[str] = mapped_column(String(50), default="test")
     adapter: Mapped[str] = mapped_column(String(50), default="generic")
     probe_error_url_patterns: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Environment(Base):
+    """同一 Site/System 下的部署环境：URL、凭证引用、标签与数据档。
+
+    流程绑定系统，不绑定某一环境的死 URL / 死单号；跑的时候再选 Environment。
+    """
+
+    __tablename__ = "environment"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    project_id: Mapped[str] = mapped_column(String(36), index=True)
+    site_id: Mapped[str] = mapped_column(ForeignKey("site.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    base_url: Mapped[str] = mapped_column(String(500))
+    credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # 数据档：username / order_no 等，供 DataStrategy kind=env 解析
+    data: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -187,6 +211,7 @@ class Batch(Base):
     project_id: Mapped[str] = mapped_column(String(36), index=True)
     site_id: Mapped[str] = mapped_column(String(36), index=True)
     suite_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    environment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     name: Mapped[str] = mapped_column(String(200), default="勾选运行")
     flow_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     items: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)

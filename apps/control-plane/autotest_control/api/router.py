@@ -3,10 +3,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from autotest_control.api import ai, flows, onboarding, recordings, runs, sites, suites, workers
+from autotest_control.api import (
+    ai,
+    environments,
+    flows,
+    onboarding,
+    recordings,
+    runs,
+    sites,
+    suites,
+    workers,
+)
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(sites.router)
+router.include_router(environments.router)
 router.include_router(ai.router)
 router.include_router(flows.router)
 router.include_router(suites.router)

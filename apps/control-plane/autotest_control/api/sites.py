@@ -21,8 +21,10 @@ from autotest_control.domain.credentials import (
     copy_project_form_locators,
     locators_from_inspect,
 )
+from autotest_control.domain.environments import seed_environment_for_site
 from autotest_control.models import (
     Credential,
+    Environment,
     Flow,
     Site,
 )
@@ -51,6 +53,7 @@ def create_site(payload: SiteCreate, scope: Scope = Depends(get_scope), session:
         probe_error_url_patterns=payload.probe_error_url_patterns,
     )
     session.add(site)
+    seed_environment_for_site(session, site)
     session.commit()
     return SiteOut(
         id=site.id,
@@ -116,8 +119,11 @@ def update_site(
 @router.delete("/sites/{site_id}")
 def delete_site(site_id: str, scope: Scope = Depends(get_scope), session: Session = Depends(get_session)) -> dict[str, Any]:
     site = get_site(session, scope, site_id)
+    envs = session.scalars(select(Environment).where(Environment.site_id == site.id)).all()
     creds = session.scalars(select(Credential).where(Credential.site_id == site.id)).all()
     flows = session.scalars(select(Flow).where(Flow.site_id == site.id)).all()
+    for row in envs:
+        session.delete(row)
     for row in creds:
         session.delete(row)
     for row in flows:

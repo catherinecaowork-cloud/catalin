@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from autotest_protocol.data_strategy import DataStrategy
+
 Action = Literal[
     "goto",
     "click",
@@ -212,9 +214,12 @@ class Step(BaseModel):
     label: str | None = None
     target: Target | None = None
     value: str | None = None
+    # 一等公民数据策略；有则优先于裸 value 字符串（裸 value 仍兼容 {{env:x}} 模板）
+    value_strategy: DataStrategy | None = None
     condition: WaitCondition | None = None
     assert_kind: AssertKind | None = None
     expected: str | None = None
+    expected_strategy: DataStrategy | None = None
     timeout_ms: int = 10_000
     # choose：search_or_first=能搜就搜没有用第一条；other=编辑时换掉已选项
     choose_mode: ChooseMode | None = None
@@ -229,10 +234,11 @@ class Step(BaseModel):
         needs_target = {"click", "fill", "select", "choose", "scroll", "upload"}
         if self.action in needs_target and self.target is None:
             raise ValueError(f"动作 {self.action} 需要 target")
-        if self.action in {"fill", "select", "choose", "scroll", "upload"} and self.value is None:
-            raise ValueError(f"动作 {self.action} 需要 value")
-        if self.action == "goto" and not self.value:
-            raise ValueError("动作 goto 需要 value（绝对地址或站点相对路径）")
+        has_value = self.value is not None or self.value_strategy is not None
+        if self.action in {"fill", "select", "choose", "scroll", "upload"} and not has_value:
+            raise ValueError(f"动作 {self.action} 需要 value 或 value_strategy")
+        if self.action == "goto" and not has_value:
+            raise ValueError("动作 goto 需要 value 或 value_strategy（绝对地址或站点相对路径）")
         if self.action == "waitFor" and self.condition is None:
             raise ValueError("动作 waitFor 需要 condition")
         if self.action == "waitFor" and self.condition in {"visible", "hidden"} and self.target is None:
@@ -240,8 +246,9 @@ class Step(BaseModel):
         if self.action == "assert":
             if self.assert_kind is None:
                 raise ValueError("动作 assert 需要 assert_kind")
-            if self.assert_kind != "no_page_error" and self.expected is None:
-                raise ValueError(f"断言 {self.assert_kind} 需要 expected")
+            has_expected = self.expected is not None or self.expected_strategy is not None
+            if self.assert_kind != "no_page_error" and not has_expected:
+                raise ValueError(f"断言 {self.assert_kind} 需要 expected 或 expected_strategy")
             if self.assert_kind in {"element_visible", "element_count"} and self.target is None:
                 raise ValueError(f"断言 {self.assert_kind} 需要 target")
         return self

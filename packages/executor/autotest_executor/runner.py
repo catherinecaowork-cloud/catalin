@@ -18,7 +18,7 @@ from autotest_executor.auth import (
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
 from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
 from autotest_executor.client import ControlPlaneClient
-from autotest_executor.variables import resolve_steps
+from autotest_executor.data_strategy import DataStrategyError, DataStrategyResolver
 from autotest_protocol import Job, Step, new_event
 
 
@@ -32,6 +32,16 @@ class RunExecutor:
         self.drifts: list[str] = []
         self.locator_updates: list[dict[str, Any]] = []
         self._capture_warned = False
+        self._data = DataStrategyResolver(self._initial_variables())
+
+    def _initial_variables(self) -> dict[str, str]:
+        merged = dict(self.job.variables or {})
+        if self.job.environment is not None and self.job.environment.data:
+            # 环境数据档垫底；Job.variables（含运行入参）优先
+            base = {str(k): str(v) for k, v in self.job.environment.data.items()}
+            base.update(merged)
+            return base
+        return merged
 
     # ------------------------------------------------------------ 主流程
 
@@ -45,18 +55,20 @@ class RunExecutor:
             headless=self.job.options.headless,
             dry_run=self.job.options.dry_run,
             base_url=self.job.site.base_url,
+            environment=self.job.environment.name if self.job.environment else None,
         )
 
         status = "passed"
         try:
-            flow_steps = resolve_steps(flow.steps, self.job.variables) if flow is not None else []
+            # 数据策略按步解析（from_step 依赖前序产出），登录步骤仍可先展开模板
             material = self._resolve_auth()
             self.session.start(cookies=material.cookies, extra_headers=material.headers)
 
             steps: list[Step] = []
             if material.form is not None:
                 steps.extend(form_login_steps(material.form, self.job.site.base_url))
-            steps.extend(flow_steps)
+            if flow is not None:
+                steps.extend(flow.steps)
 
             runner = ActionRunner(self.session)
             try:
@@ -94,8 +106,24 @@ class RunExecutor:
             total=total,
         )
         started = time.monotonic()
-        outcome = runner.run(step)
+        try:
+            resolved = self._data.resolve_step_fields(step)
+        except DataStrategyError as exc:
+            elapsed = time.monotonic() - started
+            outcome = StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                exc.message,
+                data=exc.as_failure_data(),
+            )
+            self._finish_step(step, outcome, elapsed, screenshot_url=None)
+            return outcome
+
+        outcome = runner.run(resolved)
         elapsed = time.monotonic() - started
+        if outcome.status != "failed":
+            self._data.record_step_output(step.id, outcome.data)
 
         watch_toast = outcome.status != "skipped" and step.action in {
             "click",
@@ -143,6 +171,17 @@ class RunExecutor:
                 detail=outcome.data,
             )
 
+        self._finish_step(step, outcome, elapsed, screenshot_url=screenshot_url)
+        return outcome
+
+    def _finish_step(
+        self,
+        step: Step,
+        outcome: StepOutcome,
+        elapsed: float,
+        *,
+        screenshot_url: str | None,
+    ) -> None:
         self._emit(
             "step.end",
             step_id=step.id,
@@ -164,14 +203,13 @@ class RunExecutor:
                 "message": outcome.message,
                 "elapsed_ms": int(elapsed * 1000),
                 "drift": outcome.drift,
-                # 失败分类：没找到 / 找到但点不到 / 点了没生效。只写在 message 里
-                # 就没法按类聚合，报告只能一句「偶发失败」。
+                # 失败分类：定位失败 vs 数据策略失败必须可区分。
                 "failure": outcome.data.get("failure"),
                 "failure_kind": outcome.data.get("failure_kind"),
                 "environmental": outcome.data.get("environmental"),
+                "strategy": outcome.data.get("strategy"),
             }
         )
-        return outcome
 
     def _attach_page_toasts(self, outcome: StepOutcome) -> None:
         """点完后扫右上角失败弹出，把原文挂到这一步。成功提示忽略。"""

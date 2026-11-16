@@ -36,6 +36,33 @@ class SiteOut(BaseModel):
     probe_error_url_patterns: list[str]
 
 
+class EnvironmentCreate(BaseModel):
+    name: str
+    base_url: str
+    credential_id: str | None = None
+    labels: list[str] = []
+    data: dict[str, str] = {}
+
+
+class EnvironmentUpdate(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    credential_id: str | None = None
+    labels: list[str] | None = None
+    data: dict[str, str] | None = None
+
+
+class EnvironmentOut(BaseModel):
+    id: str
+    site_id: str
+    name: str
+    base_url: str
+    credential_id: str | None = None
+    labels: list[str] = []
+    data: dict[str, str] = {}
+    created_at: datetime
+
+
 class CredentialCreate(BaseModel):
     name: str
     type: Literal["cookie", "token", "form"]
@@ -143,6 +170,7 @@ class BatchCreate(BaseModel):
     flow_ids: list[str] | None = None
     suite_id: str | None = None
     name: str | None = None
+    environment_id: str | None = None
     headless: bool = True
     dry_run: bool = False
     variables: dict[str, str] = {}
@@ -171,6 +199,8 @@ class BatchOut(BaseModel):
 class RunCreate(BaseModel):
     flow_id: str
     site_id: str | None = None
+    # 同一系统下选具体环境；省略则用站点默认 URL / 无环境数据档
+    environment_id: str | None = None
     headless: bool = True
     dry_run: bool = False
     variables: dict[str, str] = {}

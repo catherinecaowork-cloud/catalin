@@ -7,7 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from autotest_control.chain import ChainError, expand_setup_chain
 from autotest_control.deps import new_id, now
-from autotest_control.models import Batch, Flow, Run, Site
+from autotest_control.models import Batch, Environment, Flow, Run, Site
 from autotest_control.replay_bind import ReplayBindError
 from autotest_control.suites import CONFIRMED_STATUSES, decide_after_run
 from autotest_protocol import RunOptions
@@ -30,6 +30,7 @@ def enqueue_chain(
     headless: bool,
     dry_run: bool,
     variables: dict[str, str] | None = None,
+    environment: Environment | None = None,
     batch_id: str | None = None,
     batch_index: int | None = None,
 ) -> Run:
@@ -37,9 +38,13 @@ def enqueue_chain(
     run_id = new_id()
     options = RunOptions(headless=headless, dry_run=dry_run)
     if len(chain) == 1:
-        job = build_job(session, run_id, site, chain[0], options, variables)
+        job = build_job(
+            session, run_id, site, chain[0], options, variables, environment=environment
+        )
     else:
-        job = build_chain_job(session, run_id, site, chain, options, variables)
+        job = build_chain_job(
+            session, run_id, site, chain, options, variables, environment=environment
+        )
     run = Run(
         id=run_id,
         tenant_id=target.tenant_id,
@@ -66,6 +71,7 @@ def queue_replay(
     headless: bool,
     dry_run: bool,
     variables: dict[str, str] | None = None,
+    environment: Environment | None = None,
     batch_id: str | None = None,
     batch_index: int | None = None,
 ) -> Run:
@@ -77,6 +83,7 @@ def queue_replay(
         headless=headless,
         dry_run=dry_run,
         variables=variables,
+        environment=environment,
         batch_id=batch_id,
         batch_index=batch_index,
     )
@@ -117,6 +124,10 @@ def advance_batch(session: Session, run: Run) -> Run | None:
         finish_batch(batch, "failed", items)
         return None
     next_run = None
+    environment = None
+    env_id = getattr(batch, "environment_id", None)
+    if env_id:
+        environment = session.get(Environment, env_id)
     try:
         next_run = queue_replay(
             session,
@@ -125,6 +136,7 @@ def advance_batch(session: Session, run: Run) -> Run | None:
             headless=batch.headless,
             dry_run=batch.dry_run,
             variables=batch.variables or {},
+            environment=environment,
             batch_id=batch.id,
             batch_index=next_index,
         )

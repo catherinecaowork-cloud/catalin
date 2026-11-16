@@ -4,6 +4,12 @@
 平台发什么、Worker 认什么，由同一组模型保证。
 """
 
+from autotest_protocol.data_strategy import (
+    DATA_STRATEGY_KINDS,
+    DataStrategy,
+    DataStrategyKind,
+    EnvironmentRef,
+)
 from autotest_protocol.dsl import (
     ACTIONS,
     CANDIDATE_STABILITY,
@@ -51,10 +57,14 @@ from autotest_protocol.job import AuthRef, Job, JobKind, RunOptions, SiteRef
 __all__ = [
     "ACTIONS",
     "CANDIDATE_STABILITY",
+    "DATA_STRATEGY_KINDS",
     "AssertKind",
     "AuthRef",
     "Candidate",
     "ChooseMode",
+    "DataStrategy",
+    "DataStrategyKind",
+    "EnvironmentRef",
     "Event",
     "EventType",
     "Fingerprint",

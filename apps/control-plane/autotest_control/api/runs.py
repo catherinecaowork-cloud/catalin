@@ -19,6 +19,7 @@ from autotest_control.deps import (
     get_suite,
     new_id,
 )
+from autotest_control.domain.environments import EnvironmentNotFound, resolve_environment
 from autotest_control.domain.jobs import project_flow_map
 from autotest_control.domain.mappers import (
     batch_out,
@@ -54,6 +55,10 @@ def create_run(payload: RunCreate, scope: Scope = Depends(get_scope), session: S
     flow = get_flow(session, scope, payload.flow_id)
     site = get_site(session, scope, payload.site_id or flow.site_id)
     try:
+        environment = resolve_environment(session, scope, site, payload.environment_id)
+    except EnvironmentNotFound as exc:
+        raise HTTPException(status_code=404, detail="环境不存在") from exc
+    try:
         run = queue_replay(
             session,
             flow,
@@ -61,6 +66,7 @@ def create_run(payload: RunCreate, scope: Scope = Depends(get_scope), session: S
             headless=payload.headless,
             dry_run=payload.dry_run,
             variables=payload.variables,
+            environment=environment,
         )
     except (ChainError, ReplayBindError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -79,6 +85,10 @@ def create_batch(
     flow_ids = list(payload.flow_ids or (suite.flow_ids if suite is not None else []))
     members = validated_members(session, scope, payload.site_id, flow_ids)
     site = get_site(session, scope, payload.site_id)
+    try:
+        environment = resolve_environment(session, scope, site, payload.environment_id)
+    except EnvironmentNotFound as exc:
+        raise HTTPException(status_code=404, detail="环境不存在") from exc
     name = (payload.name or (suite.name if suite is not None else "") or "勾选运行").strip()
     by_id = project_flow_map(session, members[0])
     try:
@@ -94,6 +104,7 @@ def create_batch(
             headless=payload.headless,
             dry_run=payload.dry_run,
             variables=payload.variables,
+            environment=environment,
             batch_id=batch_id,
             batch_index=0,
         )
@@ -106,6 +117,7 @@ def create_batch(
         project_id=scope.project_id,
         site_id=payload.site_id,
         suite_id=suite.id if suite is not None else None,
+        environment_id=environment.id if environment is not None else None,
         name=name,
         flow_ids=[chain[-1].id],
         items=items,
