@@ -18,7 +18,7 @@ from autotest_executor.auth import (
 from autotest_executor.browser.actions import ActionRunner, StepOutcome
 from autotest_executor.browser.session import BrowserSession, HeadedNotSupported
 from autotest_executor.client import ControlPlaneClient
-from autotest_executor.variables import resolve_steps
+from autotest_executor.data_strategy import DataStrategyError, DataStrategyResolver
 from autotest_protocol import Job, Step, new_event
 
 
@@ -32,33 +32,61 @@ class RunExecutor:
         self.drifts: list[str] = []
         self.locator_updates: list[dict[str, Any]] = []
         self._capture_warned = False
+        self._data = DataStrategyResolver(
+            self._initial_variables(),
+            base_url=(
+                self.job.environment.base_url
+                if self.job.environment is not None
+                else self.job.site.base_url
+            ),
+        )
+        self._action_runner: ActionRunner | None = None
+
+    def _initial_variables(self) -> dict[str, str]:
+        merged = dict(self.job.variables or {})
+        if self.job.environment is not None and self.job.environment.data:
+            # 环境数据档垫底；Job.variables（含运行入参）优先
+            base = {str(k): str(v) for k, v in self.job.environment.data.items()}
+            base.update(merged)
+            return base
+        return merged
 
     # ------------------------------------------------------------ 主流程
 
     def execute(self) -> str:
         started = time.monotonic()
         flow = self.job.flow
+        base_url = (
+            self.job.environment.base_url
+            if self.job.environment is not None
+            else self.job.site.base_url
+        )
         self._emit(
             "run.start",
             run_id=self.job.run_id,
             flow=flow.name if flow else None,
             headless=self.job.options.headless,
             dry_run=self.job.options.dry_run,
-            base_url=self.job.site.base_url,
+            base_url=base_url,
+            environment=self.job.environment.name if self.job.environment else None,
         )
 
         status = "passed"
         try:
-            flow_steps = resolve_steps(flow.steps, self.job.variables) if flow is not None else []
+            # 数据策略按步解析（from_step / ensure 依赖前序与页面），登录步骤仍可先展开
             material = self._resolve_auth()
             self.session.start(cookies=material.cookies, extra_headers=material.headers)
+            self._data.bind_page(self.session.page)
+            self._data.set_create_steps_handler(self._run_create_steps)
 
             steps: list[Step] = []
             if material.form is not None:
-                steps.extend(form_login_steps(material.form, self.job.site.base_url))
-            steps.extend(flow_steps)
+                steps.extend(form_login_steps(material.form, base_url))
+            if flow is not None:
+                steps.extend(flow.steps)
 
             runner = ActionRunner(self.session)
+            self._action_runner = runner
             try:
                 for index, step in enumerate(steps, start=1):
                     outcome = self._run_step(runner, step, index, len(steps))
@@ -67,6 +95,9 @@ class RunExecutor:
                         break
             finally:
                 self.locator_updates = runner.locator_memory.updates
+                self._action_runner = None
+                self._data.bind_page(None)
+                self._data.close()
         except HeadedNotSupported as exc:
             # 明确失败，不静默降级成无头
             self._emit("log", level="error", message=str(exc), reason="headed_not_supported")
@@ -82,6 +113,40 @@ class RunExecutor:
         self._finish(status, duration)
         return status
 
+    def _run_create_steps(
+        self, raw_steps: list[dict[str, Any]], resolver: DataStrategyResolver
+    ) -> None:
+        """ensure 内联创建子流程：逐步解析并执行，失败则抛 DataStrategyError。"""
+        runner = self._action_runner
+        if runner is None:
+            raise DataStrategyError(
+                "ensure create_steps 需要已启动的 ActionRunner",
+                kind="invalid",
+                strategy="ensure",
+            )
+        for raw in raw_steps:
+            step = Step.model_validate(raw)
+            resolved = resolver.resolve_step_fields(step)
+            self._emit(
+                "log",
+                level="info",
+                message=f"ensure 创建子步骤：{resolved.display()}",
+                step_id=resolved.id,
+            )
+            outcome = runner.run(resolved)
+            if outcome.status == "failed":
+                raise DataStrategyError(
+                    f"ensure 创建子步骤失败：{outcome.message}",
+                    kind="not_found",
+                    strategy="ensure",
+                    detail={
+                        "create_step_id": step.id,
+                        "create_action": step.action,
+                        "message": outcome.message,
+                    },
+                )
+            resolver.record_step_output(step.id, outcome.data)
+
     # ------------------------------------------------------------ 步骤
 
     def _run_step(self, runner: ActionRunner, step: Step, index: int, total: int) -> StepOutcome:
@@ -94,8 +159,24 @@ class RunExecutor:
             total=total,
         )
         started = time.monotonic()
-        outcome = runner.run(step)
+        try:
+            resolved = self._data.resolve_step_fields(step)
+        except DataStrategyError as exc:
+            elapsed = time.monotonic() - started
+            outcome = StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                exc.message,
+                data=exc.as_failure_data(),
+            )
+            self._finish_step(step, outcome, elapsed, screenshot_url=None)
+            return outcome
+
+        outcome = runner.run(resolved)
         elapsed = time.monotonic() - started
+        if outcome.status != "failed":
+            self._data.record_step_output(step.id, outcome.data)
 
         watch_toast = outcome.status != "skipped" and step.action in {
             "click",
@@ -143,6 +224,17 @@ class RunExecutor:
                 detail=outcome.data,
             )
 
+        self._finish_step(step, outcome, elapsed, screenshot_url=screenshot_url)
+        return outcome
+
+    def _finish_step(
+        self,
+        step: Step,
+        outcome: StepOutcome,
+        elapsed: float,
+        *,
+        screenshot_url: str | None,
+    ) -> None:
         self._emit(
             "step.end",
             step_id=step.id,
@@ -171,7 +263,6 @@ class RunExecutor:
                 "environmental": outcome.data.get("environmental"),
             }
         )
-        return outcome
 
     def _attach_page_toasts(self, outcome: StepOutcome) -> None:
         """点完后扫右上角失败弹出，把原文挂到这一步。成功提示忽略。"""
@@ -227,7 +318,12 @@ class RunExecutor:
             if material is None:
                 raise RuntimeError("无法获取凭证，登录失败")
             payload = material.get("payload")
-        return build_material(self.job.auth, payload, self.job.site.base_url)
+        base_url = (
+            self.job.environment.base_url
+            if self.job.environment is not None
+            else self.job.site.base_url
+        )
+        return build_material(self.job.auth, payload, base_url)
 
     def _finish(self, status: str, duration: float) -> None:
         keep_evidence = status != "passed"
