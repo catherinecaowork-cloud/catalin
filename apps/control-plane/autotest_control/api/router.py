@@ -7,6 +7,7 @@ from autotest_control.api import (
     ai,
     auth,
     environments,
+    failure_heal,
     flows,
     objects,
     onboarding,
@@ -23,6 +24,7 @@ router.include_router(sites.router)
 router.include_router(environments.router)
 router.include_router(objects.router)
 router.include_router(ai.router)
+router.include_router(failure_heal.router)
 router.include_router(flows.router)
 router.include_router(suites.router)
 router.include_router(runs.router)

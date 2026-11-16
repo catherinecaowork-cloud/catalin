@@ -275,6 +275,7 @@ python scripts\selftest_probe.py
   - 真站「现录」验收：意图 → 录制 → 观察者/编译自证 → 保存 → 二次回放
   - CI 闸门：`active` 流程进流水线，失败非零退出
   - 对象库 Spy Web UI（API/派 job 解析已有；可视化捕捉与 Explorer 入库仍待）
+  - 失败修复 UI（API：`/failure-heal/propose` 已有；控制台确认面板仍待）
   - L1 接口引擎：导 HAR / OpenAPI、变量提取、批量跑
 - 验证码、SSO、**iframe 内元素**明确不支持。
   iframe：回放发现目标只在子 frame 时会报 `IframeNotSupported`（不再伪装成偶发找不到）。
@@ -307,3 +308,4 @@ python scripts\selftest_probe.py
 - `docs/p1.1-recording-plan.md` — 确定性录制回放
 - `docs/p1.2-ai-compiler-plan.md` — AI 编译（录完润色，不改骨架）
 - `docs/p1.2-ai-observer-plan.md` — AI 观察者（认识页面再写脚本）
+- `docs/phase-e/failure-heal-ai-patch.md` — 回放失败后 AI/fixture 提案补丁（dry-run → 人工确认写回）

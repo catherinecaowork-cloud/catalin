@@ -261,3 +261,29 @@ class HealTask(Base):
     applied_log: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class FailureHealTask(Base):
+    """回放失败后的 AI/fixture 修复提案。默认只提案，人工确认后才写回。"""
+
+    __tablename__ = "failure_heal_task"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    flow_id: Mapped[str] = mapped_column(String(36), index=True)
+    run_id: Mapped[str] = mapped_column(String(36), index=True)
+    site_id: Mapped[str] = mapped_column(String(36), index=True)
+    step_id: Mapped[str] = mapped_column(String(100), default="")
+    # proposed（dry-run）/ pending / applied / rejected / failed
+    status: Mapped[str] = mapped_column(String(20), default="proposed", index=True)
+    error_class: Mapped[str] = mapped_column(String(40), default="uncertain")
+    requires_human_confirm: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(20), default="fixture")  # ai | fixture
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    patches: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    notes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # 审计：每条含 proposed / applied / status
+    applied_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
