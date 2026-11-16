@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from autotest_control.api.router import router
+from autotest_control.api_auth import ApiTokenMiddleware
 from autotest_control.compilation_worker import compilation_worker
 from autotest_control.db import init_db
 from autotest_control.settings import settings
@@ -31,10 +32,12 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    settings.ensure_access_secrets()
     init_db()
     app = FastAPI(
         title="autotest-platform control plane", version="0.0.1", lifespan=_lifespan
     )
+    app.add_middleware(ApiTokenMiddleware)
     app.include_router(router)
 
     app.mount("/artifacts", StaticFiles(directory=settings.artifacts_dir), name="artifacts")

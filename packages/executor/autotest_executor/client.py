@@ -31,10 +31,23 @@ class ControlPlaneClient:
 
     # ---------------------------------------------------------- 注册与心跳
 
-    def register(self, name: str, labels: list[str], platform: str, project_id: str = "default") -> dict[str, Any]:
+    def register(
+        self,
+        name: str,
+        labels: list[str],
+        platform: str,
+        project_id: str = "default",
+        register_code: str = "",
+    ) -> dict[str, Any]:
         response = self._client.post(
             "/api/v1/workers/register",
-            json={"name": name, "labels": labels, "platform": platform, "project_id": project_id},
+            json={
+                "name": name,
+                "labels": labels,
+                "platform": platform,
+                "project_id": project_id,
+                "register_code": register_code,
+            },
         )
         response.raise_for_status()
         data = response.json()

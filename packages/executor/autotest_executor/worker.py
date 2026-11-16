@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import sys
@@ -18,6 +19,24 @@ from autotest_executor.inspector import InspectExecutor
 from autotest_executor.recorder import RecordExecutor
 from autotest_executor.runner import RunExecutor
 from autotest_protocol import Job
+
+
+def _resolve_register_code(explicit: str | None = None) -> str:
+    if explicit:
+        return explicit.strip()
+    env = (os.getenv("ATP_WORKER_REGISTER_CODE") or "").strip()
+    if env:
+        return env
+    # 与控制面默认落盘位置对齐（同机开发）
+    for candidate in (
+        Path.cwd() / "var" / "worker.register_code",
+        Path(__file__).resolve().parents[3] / "var" / "worker.register_code",
+    ):
+        if candidate.is_file():
+            value = candidate.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+    return ""
 
 
 def _forget_run_workspace(workspace: Path, run_id: str) -> None:
@@ -48,12 +67,14 @@ class WorkerDaemon:
         workspace: Path,
         headed_capable: bool,
         project_id: str = "default",
+        register_code: str | None = None,
     ) -> None:
         self.server = server
         self.name = name
         self.workspace = workspace
         self.headed_capable = headed_capable
         self.project_id = project_id
+        self.register_code = _resolve_register_code(register_code)
         self.identity_path = workspace / "worker-identity.json"
         self.client = ControlPlaneClient(server)
 
@@ -68,11 +89,17 @@ class WorkerDaemon:
                 print(f"复用已注册身份：{saved['worker_id']}")
                 return
 
+        if not self.register_code:
+            raise RuntimeError(
+                "缺少 Worker 注册码：请设置 ATP_WORKER_REGISTER_CODE，"
+                "或传入 --register-code（控制面首次启动会写入 var/worker.register_code）"
+            )
         data = self.client.register(
             name=self.name,
             labels=_default_labels(self.headed_capable),
             platform=f"{platform.system()} {platform.release()}",
             project_id=self.project_id,
+            register_code=self.register_code,
         )
         self.identity_path.write_text(
             json.dumps(

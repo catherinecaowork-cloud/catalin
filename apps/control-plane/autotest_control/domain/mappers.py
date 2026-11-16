@@ -112,7 +112,7 @@ def run_out(run: Run) -> RunOut:
     )
 
 
-def worker_out(worker: Worker) -> WorkerOut:
+def worker_out(worker: Worker, *, include_token: bool = False) -> WorkerOut:
     heartbeat = worker.last_heartbeat_at
     if heartbeat.tzinfo is None:
         heartbeat = heartbeat.replace(tzinfo=timezone.utc)
@@ -120,7 +120,8 @@ def worker_out(worker: Worker) -> WorkerOut:
     return WorkerOut(
         id=worker.id,
         name=worker.name,
-        token=worker.token,
+        # 列表接口不回显 token；仅注册响应带回一次
+        token=worker.token if include_token else "",
         labels=worker.labels,
         platform=worker.platform,
         online=online,

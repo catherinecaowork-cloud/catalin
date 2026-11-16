@@ -241,6 +241,8 @@ class WorkerRegister(BaseModel):
     labels: list[str] = []
     platform: str = ""
     project_id: str = "default"
+    # 与控制面 ATP_WORKER_REGISTER_CODE 对齐；任意 Worker 不能无码自助入队
+    register_code: str = ""
 
 
 class WorkerOut(BaseModel):

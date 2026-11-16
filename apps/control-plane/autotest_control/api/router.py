@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from autotest_control.api import (
     ai,
+    auth,
     environments,
     flows,
     objects,
@@ -17,6 +18,7 @@ from autotest_control.api import (
 )
 
 router = APIRouter(prefix="/api/v1")
+router.include_router(auth.router)
 router.include_router(sites.router)
 router.include_router(environments.router)
 router.include_router(objects.router)

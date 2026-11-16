@@ -10,13 +10,19 @@ from __future__ import annotations
 
 import getpass
 import sys
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-import httpx
 from playwright.sync_api import sync_playwright
 
 from autotest_executor.browser.readiness import wait_for_app_ready
 from autotest_executor.onboarding import describe_candidates, detect_login_form
+
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from atp_http import control_client  # noqa: E402
 
 SERVER = "http://127.0.0.1:8910"
 
@@ -79,7 +85,7 @@ def main() -> int:
         return 1
     success_text = input("登录成功后页面上必然出现的文字（可留空）: ").strip()
 
-    client = httpx.Client(base_url=SERVER, timeout=30.0)
+    client = control_client(SERVER, timeout=30.0)
     site = (
         client.post(
             "/api/v1/sites",

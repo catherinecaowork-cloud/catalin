@@ -26,6 +26,11 @@ def main(argv: list[str] | None = None) -> int:
         help="声明本机不能开窗（容器 / 无桌面服务器）",
     )
     worker.add_argument("--once", action="store_true", help="只执行一个任务后退出（CI 用）")
+    worker.add_argument(
+        "--register-code",
+        default=None,
+        help="Worker 注册码（也可用环境变量 ATP_WORKER_REGISTER_CODE）",
+    )
 
     args = parser.parse_args(argv)
 
@@ -36,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
             workspace=args.workspace or _default_workspace(),
             headed_capable=not args.no_headed,
             project_id=args.project,
+            register_code=args.register_code,
         )
         try:
             if args.once:

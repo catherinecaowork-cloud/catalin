@@ -1,7 +1,9 @@
-# Gitee 流水线：lint 门禁 + 安装依赖并跑 pytest
-# 浏览器自测需要 Chromium；流水线里安装 playwright 浏览器
+# Gitee 流水线：lint + pytest（平台自身）与业务日闸分开。
+# 浏览器自测需要 Chromium；流水线里安装 playwright 浏览器。
+# 日闸默认 fixture，不依赖内网；有控制面+Worker 时改跑 scripts/ci_daily_gate.py。
 stages:
   - test
+  - gate
 
 lint:
   stage: test
@@ -16,4 +18,11 @@ pytest:
   script:
     - pip install -e ".[dev]"
     - playwright install chromium
-    - pytest tests/ -q
+    - pytest tests/ -q --ignore=tests/test_ci_daily_gate.py
+
+ci-daily-gate:
+  stage: gate
+  image: python:3.11
+  script:
+    - pip install -e ".[dev]"
+    - pytest tests/test_ci_daily_gate.py -q

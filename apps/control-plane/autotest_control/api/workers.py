@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from autotest_control import crypto
+from autotest_control.api_auth import tokens_match
 from autotest_control.db import get_session, session_scope
 from autotest_control.deps import (
     auth_worker,
@@ -62,6 +63,11 @@ router = APIRouter()
 
 @router.post("/workers/register", response_model=WorkerOut)
 def register_worker(payload: WorkerRegister, session: Session = Depends(get_session)) -> WorkerOut:
+    settings.ensure_access_secrets()
+    expected = settings.worker_register_code
+    provided = (payload.register_code or "").strip()
+    if not tokens_match(provided, expected):
+        raise HTTPException(status_code=401, detail="worker 注册码无效")
     worker = Worker(
         id=new_id(),
         project_id=payload.project_id,
@@ -74,7 +80,7 @@ def register_worker(payload: WorkerRegister, session: Session = Depends(get_sess
     )
     session.add(worker)
     session.commit()
-    return worker_out(worker)
+    return worker_out(worker, include_token=True)
 
 
 
@@ -306,6 +312,25 @@ async def upload_artifact(
     return {"url": f"/artifacts/{run_id}/{safe_name}", "bytes": len(content)}
 
 
+def _credential_refs_for_worker(session: Session, worker_id: str) -> set[str]:
+    """仅允许换取该 Worker 当前已领任务（leased/running）引用的凭证。"""
+    rows = session.scalars(
+        select(Run).where(
+            Run.worker_id == worker_id,
+            Run.status.in_(["leased", "running"]),
+        )
+    ).all()
+    refs: set[str] = set()
+    for run in rows:
+        job = run.job or {}
+        auth = job.get("auth") if isinstance(job, dict) else None
+        if isinstance(auth, dict):
+            ref = auth.get("ref")
+            if ref:
+                refs.add(str(ref))
+    return refs
+
+
 @router.get("/credentials/{credential_id}/material")
 def get_credential_material(
     credential_id: str, worker_id: str, token: str, session: Session = Depends(get_session)
@@ -314,8 +339,12 @@ def get_credential_material(
 
     只有持有效令牌的 Worker 能调，且明文只在 Worker 内存中使用。
     面向使用者的读接口永远不返回它。
+    且只能换当前已领任务引用的凭证，不能任意 credential_id 扫库。
     """
     auth_worker(session, worker_id, token)
+    allowed = _credential_refs_for_worker(session, worker_id)
+    if credential_id not in allowed:
+        raise HTTPException(status_code=403, detail="凭证不属于当前任务")
     credential = session.get(Credential, credential_id)
     if credential is None:
         raise HTTPException(status_code=404, detail="凭证不存在")

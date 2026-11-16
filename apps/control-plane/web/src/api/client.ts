@@ -8,6 +8,10 @@ export class ApiError extends Error {
   }
 }
 
+const TOKEN_STORAGE_KEY = "atp_api_token";
+
+let cachedToken: string | null | undefined;
+
 function formatDetail(detail: unknown): string {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -24,13 +28,62 @@ function formatDetail(detail: unknown): string {
   return "";
 }
 
+export function getStoredApiToken(): string {
+  if (typeof cachedToken === "string") return cachedToken;
+  try {
+    cachedToken = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
+  } catch {
+    cachedToken = "";
+  }
+  return cachedToken;
+}
+
+export function setStoredApiToken(token: string): void {
+  cachedToken = token;
+  try {
+    if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+/** 本机控制台：从 /auth/bootstrap 取 token；远程需手工配置。 */
+export async function ensureApiToken(): Promise<string> {
+  const existing = getStoredApiToken();
+  if (existing) return existing;
+  try {
+    const response = await fetch("/api/v1/auth/bootstrap");
+    if (!response.ok) return "";
+    const body = (await response.json()) as {
+      api_token?: string;
+      loopback?: boolean;
+    };
+    if (body.api_token) {
+      setStoredApiToken(body.api_token);
+      return body.api_token;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  await ensureApiToken();
+  const token = getStoredApiToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.headers as Record<string, string> | undefined),
+  };
+  if (token) headers["X-API-Token"] = token;
+
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
     ...options,
+    headers,
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
