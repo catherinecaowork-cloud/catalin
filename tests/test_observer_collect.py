@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from autotest_executor.browser.locator_script import locator_init_script
 from autotest_executor.observer_collect import sanitize_observation_payload
 from tests.conftest import require_browser
 
 _BROWSER_DIR = Path(__file__).resolve().parents[1] / "packages" / "executor" / "autotest_executor" / "browser"
-_LOCATOR_JS = (_BROWSER_DIR / "locator_candidates.js").read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 _OBSERVER_JS = (_BROWSER_DIR / "observer_snapshot.js").read_text(encoding="utf-8")
 
 _FORM_HTML = """

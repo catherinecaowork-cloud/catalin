@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ant overlay fixture</title>
+  <style>
+    body { margin: 16px; font-family: sans-serif; }
+    .ant-select { display: inline-block; min-width: 200px; border: 1px solid #d9d9d9;
+                  padding: 6px 10px; cursor: pointer; background: #fff; }
+    .ant-select-selection-item { min-height: 22px; }
+    .ant-select-dropdown {
+      position: absolute; z-index: 1050; background: #fff;
+      border: 1px solid #d9d9d9; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+      min-width: 200px; margin-top: 4px;
+    }
+    .ant-select-dropdown-hidden { display: none !important; }
+    .ant-select-item-option { padding: 6px 12px; cursor: pointer; }
+    .ant-select-item-option-disabled { color: #bbb; pointer-events: none; }
+    .hidden-measure { display: none; height: 0; overflow: hidden; }
+    .ant-btn { padding: 6px 14px; border: 1px solid #d9d9d9; background: #fff; cursor: pointer; }
+    .ant-btn-primary { background: #1677ff; color: #fff; border-color: #1677ff; }
+    .ant-modal-wrap {
+      position: fixed; inset: 0; background: rgba(0,0,0,.35);
+      display: none; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .ant-modal-wrap.open { display: flex; }
+    .ant-modal-content { background: #fff; padding: 16px 20px; min-width: 280px;
+                         border-radius: 6px; }
+    .ant-modal-title { font-weight: 600; margin-bottom: 12px; }
+    .ant-dropdown {
+      position: absolute; z-index: 1050; background: #fff;
+      border: 1px solid #d9d9d9; min-width: 140px; display: none;
+    }
+    .ant-dropdown.open { display: block; }
+    .ant-dropdown-menu-item { padding: 8px 12px; cursor: pointer; }
+    .ant-dropdown-menu-item-disabled { color: #bbb; pointer-events: none; }
+    #log { margin-top: 24px; color: #555; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>本地 Ant Design 浮层回归</h1>
+
+  <!-- 下拉：隐藏量高副本在前，可见选项在后（rc-virtual-list 典型形态） -->
+  <label>品牌</label>
+  <div id="brand-trigger" class="ant-select" role="combobox" data-testid="brand-select"
+       onclick="toggleBrand()">
+    <span id="brand-value" class="ant-select-selection-item">请选择</span>
+  </div>
+  <div id="brand-dropdown" class="ant-select-dropdown ant-select-dropdown-hidden"
+       style="top: 72px; left: 16px;">
+    <div class="rc-virtual-list">
+      <div class="ant-select-item-option hidden-measure" title="品牌A">品牌A</div>
+      <div class="ant-select-item-option" title="品牌A" onclick="pickBrand('品牌A')">品牌A</div>
+      <div class="ant-select-item-option ant-select-item-option-disabled" title="停用">停用</div>
+      <div class="ant-select-item-option" title="品牌B" onclick="pickBrand('品牌B')">品牌B</div>
+    </div>
+  </div>
+
+  <!-- 菜单型 ant-dropdown（曾不在 DROPDOWN_PANEL 里） -->
+  <button id="more-btn" class="ant-btn" type="button" style="margin-left: 24px;"
+          onclick="toggleMenu()">更多</button>
+  <div id="more-menu" class="ant-dropdown" style="top: 72px; left: 280px;">
+    <div class="ant-dropdown-menu-item" onclick="pickMenu('导出')">导出</div>
+    <div class="ant-dropdown-menu-item ant-dropdown-menu-item-disabled">禁用项</div>
+    <div class="ant-dropdown-menu-item" onclick="pickMenu('删除')">删除</div>
+  </div>
+
+  <!-- 弹窗 -->
+  <button id="open-modal" class="ant-btn ant-btn-primary" type="button"
+          style="display:block; margin-top: 24px;" onclick="openModal()">新增</button>
+  <div id="modal" class="ant-modal-wrap" role="dialog">
+    <div class="ant-modal-content">
+      <div class="ant-modal-title">新增款式</div>
+      <button id="modal-save" class="ant-btn ant-btn-primary" type="button"
+              onclick="saveModal()">保存</button>
+      <button id="modal-cancel" class="ant-btn" type="button"
+              onclick="closeModal()">取消</button>
+    </div>
+  </div>
+
+  <div id="log">ready</div>
+
+  <script>
+    function log(msg) { document.getElementById('log').textContent = msg; }
+    function toggleBrand() {
+      const dd = document.getElementById('brand-dropdown');
+      const hidden = dd.classList.contains('ant-select-dropdown-hidden');
+      dd.classList.toggle('ant-select-dropdown-hidden', !hidden);
+      log(hidden ? 'brand-open' : 'brand-closed');
+    }
+    function pickBrand(name) {
+      document.getElementById('brand-value').textContent = name;
+      document.getElementById('brand-dropdown').classList.add('ant-select-dropdown-hidden');
+      log('brand=' + name);
+    }
+    function toggleMenu() {
+      const menu = document.getElementById('more-menu');
+      menu.classList.toggle('open');
+      log(menu.classList.contains('open') ? 'menu-open' : 'menu-closed');
+    }
+    function pickMenu(name) {
+      document.getElementById('more-menu').classList.remove('open');
+      log('menu=' + name);
+    }
+    function openModal() {
+      document.getElementById('modal').classList.add('open');
+      log('modal-open');
+    }
+    function closeModal() {
+      document.getElementById('modal').classList.remove('open');
+      log('modal-closed');
+    }
+    function saveModal() {
+      document.getElementById('modal').classList.remove('open');
+      log('modal-saved');
+    }
+  </script>
+</body>
+</html>

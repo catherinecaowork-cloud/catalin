@@ -15,12 +15,15 @@
     '.oio-modal',
     '.ant-drawer-content',
   ].join(',');
-  const PORTAL_SEL = [
+  // 与 locator_candidates 共用 __atpUiSelectors；未注入时退回最小子集（仅观察者自测）。
+  const _S = globalThis.__atpUiSelectors || {};
+  const PORTAL_SEL = _S.PORTAL_SEL || [
     '.ant-select-dropdown:not(.ant-select-dropdown-hidden)',
     '.el-select-dropdown',
     '.el-popper.el-select__popper',
   ].join(',');
-  const OPTION_SEL = '.ant-select-item-option, .el-select-dropdown__item, [role=option]';
+  const OPTION_SEL = _S.STD_OPTION_SEL
+    || '.ant-select-item-option, .el-select-dropdown__item, [role=option]';
   const MAX_FIELDS = 80;
   const MAX_OPTIONS = 20;
   const TRANSIENT_LABEL = /^\d{1,4}$/;

@@ -15,9 +15,7 @@ from urllib.parse import urljoin
 from autotest_adapters.oinone.selectors import (
     COMBOBOX_ANCESTOR_JS,
     CLICKABLE_ANCESTOR_XPATH,
-    DROPDOWN_MIXED_VISIBLE,
     DROPDOWN_SCROLL_HOLDER,
-    DROPDOWN_WIDGETS,
     CLICKABLE_VISIBLE,
     MODAL_WRAP_VISIBLE,
     JS_FIELD_REQUIRED,
@@ -29,14 +27,12 @@ from autotest_adapters.oinone.selectors import (
     MODAL_VISIBLE,
     OVERLAY_WAIT_VISIBLE,
     DATE_PICKER_WIDGETS,
-    is_select_trigger_css,
-    looks_like_dropdown_option,
     looks_like_picker_date,
-    panel_visible_selectors,
 )
 from autotest_executor.browser.locator import (
     ENVIRONMENTAL_KINDS,
     FailureKind,
+    IframeNotSupported,
     LocatorMemory,
     LocatorResolution,
     TargetNotFound,
@@ -54,6 +50,13 @@ from autotest_executor.browser.locator import (
     wait_any_dropdown_panel,
     wait_target_hidden,
     wait_visible_dropdown_panel,
+)
+from autotest_executor.ui_selectors import (
+    DROPDOWN_MIXED_VISIBLE,
+    DROPDOWN_WIDGETS,
+    is_select_trigger_css,
+    looks_like_dropdown_option,
+    panel_visible_selectors,
 )
 from autotest_executor.browser.readiness import wait_for_app_ready, wait_for_route_idle
 from autotest_executor.browser.session import BrowserSession
@@ -443,6 +446,18 @@ class ActionRunner:
                     "failure": FAILURE_NOT_ACTIONABLE,
                     "failure_kind": FailureKind.COVERED,
                     "environmental": True,
+                },
+            )
+        except IframeNotSupported as exc:
+            return StepOutcome(
+                step.id,
+                step.action,
+                "failed",
+                str(exc),
+                data={
+                    "failure": FAILURE_NOT_FOUND,
+                    "failure_kind": FailureKind.TARGET_CHANGED,
+                    "unsupported": "iframe",
                 },
             )
         except TargetNotFound as exc:

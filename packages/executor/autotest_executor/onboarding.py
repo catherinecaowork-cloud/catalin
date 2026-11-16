@@ -3,19 +3,18 @@
 接入新站点时，由执行器打开页面、猜出账号框 / 密码框 / 提交按钮，
 把候选定位交回控制面让人确认。控制面自己不开浏览器。
 
-定位候选与录制共用 locator_candidates.js，两处各写一份迟早会漂移。
+定位候选与录制经 locator_script 注入同一份选择器前言 + candidates。
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Page
 
-_LOCATOR_JS = (Path(__file__).resolve().parent / "browser" / "locator_candidates.js").read_text(
-    encoding="utf-8"
-)
+from autotest_executor.browser.locator_script import locator_init_script
+
+_LOCATOR_JS = locator_init_script()
 
 # 只找登录表单需要的三个东西；候选计算交给 __atpDescribe。
 JS_FIND_LOGIN_FORM = """

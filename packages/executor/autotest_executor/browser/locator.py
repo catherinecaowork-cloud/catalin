@@ -25,25 +25,44 @@ from autotest_adapters.oinone.navigation import (  # noqa: F401
     click_sidebar_menu as click_ant_sidebar_menu,
 )
 from autotest_adapters.oinone.selectors import (
-    DROPDOWN_MIXED_VISIBLE,
-    DROPDOWN_OPTION,
-    DROPDOWN_OPTION_ACTIVE,
-    DROPDOWN_PANEL,
-    DROPDOWN_SEARCH,
-    DROPDOWN_SCROLL_HOLDER,
-    DROPDOWN_VIRTUAL_HOLDER,
     FIELD_INPUT,
-    LIVE_DROPDOWN,
     LIVE_MODAL,
     MODAL_VISIBLE,
-    OPTION_BY_TITLE,
-    PICKER_PANEL_VISIBLE,
     PANEL_TAB,
     PANEL_TAG,
     SELECTED_OPTION_TOKENS,
     SKIP_OPTION_LABELS,
     sanitize_css_selector,
 )
+from autotest_executor.ui_selectors import (
+    DROPDOWN_OPTION,
+    DROPDOWN_OPTION_ACTIVE,
+    DROPDOWN_PANEL,
+    DROPDOWN_SEARCH,
+    DROPDOWN_SCROLL_HOLDER,
+    DROPDOWN_VIRTUAL_HOLDER,
+    LIVE_DROPDOWN,
+    OPTION_BY_TITLE,
+    PICKER_PANEL_VISIBLE,
+)
+from autotest_executor.browser.visibility import (
+    _VISIBILITY_PROBE_LIMIT,  # noqa: F401 - 测试与对外兼容再导出
+    first_visible as _first_visible,
+    wait_any_dropdown_panel,  # noqa: F401 - actions / selftest 从本模块导入
+    wait_first_visible as _wait_first_visible,
+    wait_visible_dropdown_panel,  # noqa: F401
+    visible_dropdown_panel,
+)
+
+_visible_dropdown_panel = visible_dropdown_panel
+
+
+class IframeNotSupported(RuntimeError):
+    """目标位于 iframe 内。
+
+    平台明确不支持跨 frame 定位；发现目标只在子 frame 里时立刻报不支持，
+    而不是空等到超时再伪装成偶发 TargetNotFound。
+    """
 
 
 class FailureKind:
@@ -384,57 +403,6 @@ def _try_root_locator(loc: Locator) -> Locator | None:
     return None
 
 
-# 可见性探测上限：隐藏副本通常是个位数，无上限会在病态 DOM（同一选择器命中上百个节点）
-# 上把一次解析拖成秒级。20 已远超实际需要，同时给「可见的那个排在很后面」留了余量。
-_VISIBILITY_PROBE_LIMIT = 20
-
-# 轮询间隔。Playwright 1.49.1 没有 locator.filter(visible=True)（需 ≥1.51），
-# 且给候选 CSS 拼 `:visible` 会破坏 role/text 等非 CSS 候选，所以自己轮询。
-_VISIBILITY_POLL_MS = 100
-
-
-def _first_visible(locator: Locator) -> Locator | None:
-    """按 DOM 顺序返回第一个可见匹配；全不可见或探测超限时返回 None。
-
-    Ant Design / rc-virtual-list 会在同一层里留一份隐藏副本（量高用）并排在 DOM 前面。
-    取 `.first` 会命中它，从而把整个候选误判为不可见——可见的那个从未被检查。
-
-    与 `_try_root` 的「取最后一个可见」**刻意不同向**：那里要的是最新打开的面板
-    （新面板追加在 DOM 后面），这里要的是第一个活着的匹配。两者理由不同，不强行统一。
-    """
-    try:
-        total = locator.count()
-    except Exception:
-        return None
-    for index in range(min(total, _VISIBILITY_PROBE_LIMIT)):
-        node = locator.nth(index)
-        try:
-            if node.is_visible():
-                return node
-        except Exception:
-            continue
-    return None
-
-
-def _wait_first_visible(locator: Locator, timeout_ms: int) -> Locator | None:
-    """轮询到超时，返回第一个可见匹配。
-
-    替代 `locator.first.wait_for(state="visible")`——后者只认第一个匹配，
-    正是隐藏副本场景下失效的那条路。
-    """
-    deadline = time.monotonic() + max(0, timeout_ms) / 1000
-    while True:
-        found = _first_visible(locator)
-        if found is not None:
-            return found
-        if time.monotonic() >= deadline:
-            return None
-        try:
-            locator.page.wait_for_timeout(_VISIBILITY_POLL_MS)
-        except Exception:
-            return None
-
-
 def _locator_accepts_fill(locator: Locator, fill_value: str | None) -> bool:
     """fill 步骤不能落到无关的只读日期框上。"""
     if not fill_value:
@@ -687,7 +655,38 @@ def resolve_target(
         healed.failed = list(failed)
         return healed
 
+    _raise_if_only_in_iframe(page, target)
     raise TargetNotFound(tried, failure_kind)
+
+
+def _raise_if_only_in_iframe(page: Page, target: Target) -> None:
+    """主文档没命中时，若子 frame 能看见目标，明确报不支持。"""
+    frames = getattr(page, "frames", None) or []
+    if len(frames) <= 1:
+        return
+    main = page.main_frame
+    for frame in frames:
+        if frame == main:
+            continue
+        for candidate in target.ordered():
+            if candidate.kind != "css" or not candidate.value:
+                continue
+            try:
+                loc = frame.locator(sanitize_css_selector(candidate.value))
+                total = min(loc.count(), 5)
+            except Exception:
+                continue
+            for index in range(total):
+                try:
+                    if loc.nth(index).is_visible():
+                        raise IframeNotSupported(
+                            "目标位于 iframe 内，平台明确不支持跨 frame 定位与操作"
+                            f"（候选 {candidate.describe()}）"
+                        )
+                except IframeNotSupported:
+                    raise
+                except Exception:
+                    continue
 
 
 def _candidate_timeout(index: int, timeout_ms: int, count: int, has_preferred: bool) -> int:
@@ -721,70 +720,8 @@ _SKIP_OPTION_LABELS = SKIP_OPTION_LABELS
 _PANEL_TAB = PANEL_TAB
 _PANEL_TAG = PANEL_TAG
 
-
-def _visible_dropdown_panel(page: Page):
-    dropdown = page.locator(_DROPDOWN_PANEL)
-    try:
-        if dropdown.count() == 0:
-            return None
-        return dropdown.last
-    except Exception:
-        return None
-
-
-def visible_dropdown_panel(page: Page):
-    """当前可见的下拉面板。已打开就不要再点触发器，Ant 下拉会点一下关一下。"""
-    return _visible_dropdown_panel(page)
-
-
-def wait_visible_dropdown_panel(page: Page, timeout_ms: int):
-    """轮询到出现可见下拉面板为止，超时返回 None。
-
-    替代 `wait_for_timeout(250)` + `locator.last.wait_for(visible)`：那 250ms 是纯硬等，
-    动画快时白等，慢时又不够。调用点已经确认过「当前没有可见面板」，
-    所以之后出现的面板一定是刚点开的那个，不会与正在关闭的旧面板混淆。
-    """
-    deadline = time.monotonic() + max(0, timeout_ms) / 1000
-    while True:
-        panel = visible_dropdown_panel(page)
-        if panel is not None:
-            return panel
-        if time.monotonic() >= deadline:
-            return None
-        try:
-            page.wait_for_timeout(_VISIBILITY_POLL_MS)
-        except Exception:
-            return None
-
-
-def wait_any_dropdown_panel(page: Page, timeout_ms: int):
-    """轮询到出现可见下拉面板为止，两种口径取**并集**；超时返回 None。
-
-    与 `wait_visible_dropdown_panel` 的差别只在口径，不在等待方式：
-    那个只认 `DROPDOWN_PANEL`（本仓判定「下拉开着」的正规口径，多出 cascader），
-    这个还认 `DROPDOWN_MIXED_VISIBLE`（`_wait_dropdown` 原来的口径，多出
-    `.el-popper` / `.ant-dropdown`）。两份各有对方没有的选择器，所以取并集。
-
-    为什么要并集：调用点是「点击后确认下拉开没开」。它要抓的是**什么都没弹出来**，
-    口径取窄会把原本能过的用例判成「点了没生效」——那是把新检查变成新故障。
-    收窄口径是「选择器单一来源」那一节的事，不在这里顺手做。
-    """
-    deadline = time.monotonic() + max(0, timeout_ms) / 1000
-    while True:
-        if visible_dropdown_panel(page) is not None:
-            return True
-        mixed = page.locator(DROPDOWN_MIXED_VISIBLE)
-        try:
-            if mixed.count() and mixed.last.is_visible():
-                return True
-        except Exception:
-            pass
-        if time.monotonic() >= deadline:
-            return None
-        try:
-            page.wait_for_timeout(_VISIBILITY_POLL_MS)
-        except Exception:
-            return None
+# visible_dropdown_panel / wait_*_dropdown_panel 从 visibility 转入并在此再导出，
+# 供 actions 与既有 selftest 的 import 路径不变。
 
 
 def _dropdown_search_box(page: Page):

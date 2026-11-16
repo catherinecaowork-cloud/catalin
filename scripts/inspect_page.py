@@ -1,7 +1,7 @@
 """踩点：打开一个页面，列出可交互元素和它们的候选定位方式。
 
 接入新站点时用它替代手工扒 DOM。输出按稳定性排序，直接能抄进流程配置。
-候选计算与录制共用 locator_candidates.js。
+候选计算与录制经 locator_script 注入同一份选择器。
 
 用法：python scripts/inspect_page.py <url> [--headed] [--shot 输出.png]
 """
@@ -10,20 +10,13 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from autotest_executor.browser.locator_script import locator_init_script
 from autotest_executor.browser.readiness import wait_for_app_ready
 
-_LOCATOR_JS = (
-    Path(__file__).resolve().parents[1]
-    / "packages"
-    / "executor"
-    / "autotest_executor"
-    / "browser"
-    / "locator_candidates.js"
-).read_text(encoding="utf-8")
+_LOCATOR_JS = locator_init_script()
 
 JS_COLLECT = """
 () => {

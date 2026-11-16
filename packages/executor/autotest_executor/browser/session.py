@@ -15,12 +15,13 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from autotest_protocol import Job
 
+from autotest_executor.browser.locator_script import locator_init_script
+
 _PROBE_JS = (Path(__file__).resolve().parent / "probe.js").read_text(encoding="utf-8")
 # 指纹解析在页面内算分。回放时步骤里带着指纹，缺了这份脚本就只剩
 # 「候选全失效 → 找不到」，自愈形同虚设，所以在上下文层面无条件注入。
-_LOCATOR_JS = (Path(__file__).resolve().parent / "locator_candidates.js").read_text(
-    encoding="utf-8"
-)
+# 必须经 locator_init_script：选择器前言 + candidates，避免 JS 再抄一份。
+_LOCATOR_JS = locator_init_script()
 
 
 class HeadedNotSupported(RuntimeError):
