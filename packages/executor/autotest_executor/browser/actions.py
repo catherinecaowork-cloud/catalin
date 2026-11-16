@@ -475,7 +475,10 @@ class ActionRunner:
     def _do_goto(self, step: Step) -> StepOutcome:
         target_url = step.value or "/"
         if not target_url.startswith(("http://", "https://")):
-            target_url = urljoin(self.job.site.base_url + "/", target_url.lstrip("/"))
+            base = self.job.site.base_url
+            if self.job.environment is not None and self.job.environment.base_url:
+                base = self.job.environment.base_url
+            target_url = urljoin(base.rstrip("/") + "/", target_url.lstrip("/"))
         self.session.page.goto(target_url, timeout=step.timeout_ms, wait_until="domcontentloaded")
         # 单页应用在 DOM 就绪后还要渲染一段时间，不等会间歇性找不到元素
         ready = wait_for_app_ready(self.session.page, timeout_ms=step.timeout_ms)

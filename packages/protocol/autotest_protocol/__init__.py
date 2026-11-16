@@ -6,6 +6,7 @@
 
 from autotest_protocol.data_strategy import (
     DATA_STRATEGY_KINDS,
+    STORE_UPSERT_FLOW_ID,
     DataStrategy,
     DataStrategyKind,
     EnvironmentRef,
@@ -58,6 +59,7 @@ __all__ = [
     "ACTIONS",
     "CANDIDATE_STABILITY",
     "DATA_STRATEGY_KINDS",
+    "STORE_UPSERT_FLOW_ID",
     "AssertKind",
     "AuthRef",
     "Candidate",

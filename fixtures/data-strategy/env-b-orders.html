@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>订单列表 · 环境 B</title>
+  <style>
+    body { font-family: sans-serif; margin: 24px; }
+    table { border-collapse: collapse; width: 480px; }
+    th, td { border: 1px solid #d9d9d9; padding: 8px 12px; text-align: left; }
+    th { background: #fafafa; }
+  </style>
+</head>
+<body>
+  <h1>订单列表（环境 B）</h1>
+  <p>环境 B 缺目标订单；ensure 创建后才会出现 B-200。</p>
+  <table id="orders">
+    <thead>
+      <tr><th>单号</th><th>客户</th><th>状态</th></tr>
+    </thead>
+    <tbody>
+      <tr class="order-row" data-order-id="B-001" data-customer="carol">
+        <td class="order-code">B-001</td>
+        <td>carol</td>
+        <td>open</td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>
