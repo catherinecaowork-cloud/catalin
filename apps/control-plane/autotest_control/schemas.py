@@ -344,6 +344,34 @@ class HealTaskOut(BaseModel):
     applied_log: list[str] = []
 
 
+class FailureHealProposeIn(BaseModel):
+    """触发失败修复提案。默认 dry_run + 无 Key 时走 fixture。"""
+
+    step_id: str | None = None
+    dry_run: bool = True
+    # None=无网关配置时自动 fixture；True 强制 fixture；False 强制走真实模型
+    fixture_mode: bool | None = None
+
+
+class FailureHealTaskOut(BaseModel):
+    id: str
+    flow_id: str
+    run_id: str
+    site_id: str
+    step_id: str
+    status: str
+    error_class: str
+    requires_human_confirm: bool
+    source: str
+    context: dict[str, Any]
+    patches: list[dict[str, Any]]
+    notes: list[str] = []
+    usage: dict[str, Any] = {}
+    applied_log: list[dict[str, Any]] = []
+    dry_run: bool = True
+    created_at: datetime | None = None
+
+
 class UiObjectCreate(BaseModel):
     key: str
     name: str

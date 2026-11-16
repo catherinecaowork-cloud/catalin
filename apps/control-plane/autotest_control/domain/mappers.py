@@ -4,6 +4,7 @@ from datetime import timezone
 
 from autotest_control.models import (
     Batch,
+    FailureHealTask,
     Flow,
     HealTask,
     RecordingCompilation,
@@ -15,6 +16,7 @@ from autotest_control.schemas import (
     AIConfigOut,
     BatchOut,
     CompilationOut,
+    FailureHealTaskOut,
     FlowOut,
     HealTaskOut,
     RunOut,
@@ -35,6 +37,27 @@ def heal_out(task: HealTask) -> HealTaskOut:
         instruction=task.instruction,
         patches=task.patches or [],
         applied_log=task.applied_log or [],
+    )
+
+
+def failure_heal_out(task: FailureHealTask) -> FailureHealTaskOut:
+    return FailureHealTaskOut(
+        id=task.id,
+        flow_id=task.flow_id,
+        run_id=task.run_id,
+        site_id=task.site_id,
+        step_id=task.step_id,
+        status=task.status,
+        error_class=task.error_class,
+        requires_human_confirm=task.requires_human_confirm,
+        source=task.source,
+        context=task.context or {},
+        patches=task.patches or [],
+        notes=task.notes or [],
+        usage=task.usage or {},
+        applied_log=task.applied_log or [],
+        dry_run=bool(task.dry_run),
+        created_at=task.created_at,
     )
 
 

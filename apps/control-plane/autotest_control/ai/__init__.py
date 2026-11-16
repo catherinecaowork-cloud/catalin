@@ -12,6 +12,17 @@ from .compiler import (
     parse_contract,
     validate_template_value,
 )
+from .failure_healer import (
+    AIFailureHealer,
+    FailureHealContract,
+    FailureHealPatch,
+    FailureHealResult,
+    apply_failure_patches,
+    build_failure_context,
+    classify_error_class,
+    fixture_propose,
+    parse_failure_heal_contract,
+)
 from .observer import AIObserver, parse_observer_contract, validate_observer_steps
 from .schemas import (
     AssertionProposal,
@@ -25,6 +36,7 @@ from .schemas import (
 
 __all__ = [
     "AICompiler",
+    "AIFailureHealer",
     "AIObserver",
     "AIConfigurationError",
     "AIContractError",
@@ -33,12 +45,20 @@ __all__ = [
     "AssertionProposal",
     "CompileContract",
     "CompileResult",
+    "FailureHealContract",
+    "FailureHealPatch",
+    "FailureHealResult",
     "ImageInput",
     "MessageResult",
     "StepEdit",
     "TokenUsage",
     "apply_contract",
+    "apply_failure_patches",
+    "build_failure_context",
+    "classify_error_class",
+    "fixture_propose",
     "parse_contract",
+    "parse_failure_heal_contract",
     "parse_observer_contract",
     "validate_observer_steps",
     "validate_template_value",

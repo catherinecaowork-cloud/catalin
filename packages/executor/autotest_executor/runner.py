@@ -266,6 +266,9 @@ class RunExecutor:
                 "failure_kind": outcome.data.get("failure_kind"),
                 "environmental": outcome.data.get("environmental"),
                 "strategy": outcome.data.get("strategy"),
+                # 供失败修复收集上下文（AI healer）；无截图时为 None
+                "screenshot": screenshot_url,
+                "tried": outcome.data.get("tried"),
             }
         )
 
