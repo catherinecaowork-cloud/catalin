@@ -1,4 +1,4 @@
-import { FileText, RefreshCw, Save, Sparkles } from "lucide-react";
+import { FileText, ListChecks, RefreshCw, Save } from "lucide-react";
 
 import { useRecordContext } from "../../context/RecordContext";
 import {
@@ -21,7 +21,7 @@ export function RecordDraftWorkspace() {
   const toolbar = (
     <ModuleToolbar color="var(--c-record)">
       <ModuleToolbarGroup>
-        <ModuleToolbarLabel icon={Sparkles}>确认步骤</ModuleToolbarLabel>
+        <ModuleToolbarLabel icon={ListChecks}>确认步骤</ModuleToolbarLabel>
         <ModuleToolbarBadge>{ctx.compilePath}</ModuleToolbarBadge>
       </ModuleToolbarGroup>
       {canToggleScripts ? (
@@ -29,7 +29,7 @@ export function RecordDraftWorkspace() {
           <ModuleToolbarSep />
           <ModuleToolbarGroup>
             <ModuleToolbarButton
-              icon={Sparkles}
+              icon={ListChecks}
               label="观察者"
               active={ctx.scriptSource === "observer"}
               onClick={() => ctx.switchScriptSource("observer")}
@@ -72,7 +72,7 @@ export function RecordDraftWorkspace() {
           onAdd={(action, afterIndex) => ctx.addDraftStep(action, afterIndex)}
           onMakeUniqueValue={(index) => ctx.setStepUniqueValue(index)}
         />
-        <aside className="record-save-panel">
+        <aside className="record-save-panel" aria-label="保存与断言">
           <RecordSidebarFoot />
         </aside>
       </div>

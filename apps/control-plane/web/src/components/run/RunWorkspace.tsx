@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useBottomPanelPublisher } from "../../context/BottomPanelContext";
 import { HealModal } from "../HealModal";
 import { ShotViewer } from "../ShotViewer";
 import { useRunStream } from "../../hooks/useRunStream";
@@ -43,7 +42,6 @@ export function RunWorkspace({
   }, []);
 
   const stream = useRunStream(runId, onLog, handleFollowBatch, onRunEnd);
-  useBottomPanelPublisher(stream.steps, stream.alerts);
   const [inspectTab, setInspectTab] = useState<InspectTab>("shot");
   const [viewerOpen, setViewerOpen] = useState(false);
   const [healTask, setHealTask] = useState<HealTask | null>(null);

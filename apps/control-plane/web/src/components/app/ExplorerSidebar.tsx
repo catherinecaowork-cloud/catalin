@@ -192,7 +192,7 @@ export function ExplorerSidebar({
                 nodes={nodes}
                 filter={filter}
                 onFilterChange={setFilter}
-                filterPlaceholder="Enter text to search..."
+                filterPlaceholder="搜索用例、套件或记录…"
                 emptyMessage={ctx.loading ? "加载中…" : "没有匹配项"}
                 filterActions={filterActions}
                 onSelectAll={history.selectAll}
@@ -201,9 +201,11 @@ export function ExplorerSidebar({
           </SidebarBody>
         }
         foot={
-          <SidebarFoot>
-            <RunSidebarFootActions onOpenRun={onOpenRun} />
-          </SidebarFoot>
+          ctx.siteId ? (
+            <SidebarFoot>
+              <RunSidebarFootActions onOpenRun={onOpenRun} />
+            </SidebarFoot>
+          ) : undefined
         }
       />
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />

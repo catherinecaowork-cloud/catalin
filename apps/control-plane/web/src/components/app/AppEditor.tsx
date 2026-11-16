@@ -8,7 +8,6 @@ import { EditorLayout, EditorPlaceholder, EditorView } from "../layout/EditorLay
 import { StartPage } from "../layout/StartPage";
 import { RecordEditorBody } from "../record/RecordEditorBody";
 import { RunWorkspace } from "../run/RunWorkspace";
-import { BottomPanelProvider } from "../../context/BottomPanelContext";
 import { BottomPanel } from "../layout/BottomPanel";
 
 type Props = {
@@ -140,19 +139,17 @@ export function AppEditor({
   })();
 
   return (
-    <BottomPanelProvider>
-      <EditorLayout
-        footer={
-          <BottomPanel
-            lines={logLines}
-            open={logOpen}
-            onClear={onClearLog}
-            onToggle={onToggleLog}
-          />
-        }
-      >
-        {body}
-      </EditorLayout>
-    </BottomPanelProvider>
+    <EditorLayout
+      footer={
+        <BottomPanel
+          lines={logLines}
+          open={logOpen}
+          onClear={onClearLog}
+          onToggle={onToggleLog}
+        />
+      }
+    >
+      {body}
+    </EditorLayout>
   );
 }

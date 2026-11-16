@@ -35,7 +35,7 @@ export function AssertPane({ asserts }: { asserts: Record<string, unknown>[] }) 
   return (
     <div className="assert-list">
       {asserts.map((item, index) => (
-        <div key={index} className="card">
+        <div key={index} className="assert-row">
           <div className={`result ${item.status}`}>
             {item.status === "passed" ? "通过" : "失败"} · {String(item.kind ?? "")}
           </div>
