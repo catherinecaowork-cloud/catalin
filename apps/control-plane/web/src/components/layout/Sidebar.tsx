@@ -17,8 +17,10 @@ export function Sidebar({ open, title, body, foot, explorer }: Props) {
         <b>{explorer ? "资源树" : title}</b>
         {explorer && title ? <span className="side-head-sub">{title}</span> : null}
       </div>
+      {/* 资源树：执行动作靠上，树体占满剩余高度，避免头顶空白、脚部拥挤 */}
+      {explorer && foot ? <div className="side-actions">{foot}</div> : null}
       {body}
-      {foot}
+      {!explorer ? foot : null}
     </aside>
   );
 }

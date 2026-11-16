@@ -9,7 +9,12 @@ type Props = {
 export function TitleBar({ toolbar, tabs, status }: Props) {
   return (
     <header className="titlebar">
-      <div className="brand">ATP</div>
+      <div className="brand" title="Catalin">
+        <span className="brand-mark" aria-hidden>
+          C
+        </span>
+        <span className="brand-name">Catalin</span>
+      </div>
       {toolbar}
       {tabs}
       {status}
