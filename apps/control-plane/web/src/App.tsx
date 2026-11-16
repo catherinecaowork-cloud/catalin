@@ -173,8 +173,6 @@ function AppWorkbenchBody({
               onLog={onLog}
               onLaunchRecord={() => setRecordModalOpen(true)}
               onOpenRun={() => openModule("run")}
-              onToggleLog={onToggleLog}
-              logOpen={logOpen}
             />
           }
           status={
@@ -187,6 +185,8 @@ function AppWorkbenchBody({
               onStart={() => void worker.start()}
               onStop={() => void worker.stop()}
               onOpenAiConfig={() => void ai.openModal()}
+              onToggleLog={onToggleLog}
+              logOpen={logOpen}
             />
           }
         />
@@ -215,6 +215,7 @@ function AppWorkbenchBody({
               onOpenRecord={() => setRecordModalOpen(true)}
               onOpenRunModule={() => openModule("run")}
               onOpenHistory={() => openModule("history")}
+              onOpenRunRecord={openRunTab}
               onLog={onLog}
               onFollowBatch={(runId, title) => openRunTab(runId, title, lastHeaded)}
               onRunEnd={notifyRunFinished}

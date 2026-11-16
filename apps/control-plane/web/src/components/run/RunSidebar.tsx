@@ -10,7 +10,7 @@ import { FlowExplorerContextMenu } from "../patterns/FlowExplorerContextMenu";
 import { FlowSetupModal } from "../patterns/FlowSetupModal";
 import { ExplorerTree, type ExplorerNode } from "../patterns/ExplorerTree";
 import { PromptModal } from "../patterns/PromptModal";
-import { Button, EmptyState, FootHint, Switch } from "../ui";
+import { Button, EmptyState, Switch } from "../ui";
 import { DeleteFlowModal } from "./DeleteFlowModal";
 import { ImportFlowsModal } from "./ImportFlowsModal";
 
@@ -227,25 +227,18 @@ export function RunSidebarFoot({
   const promoteVariant =
     selectedFlow && selectedFlow.status !== "draft" ? "warn" : "primary";
 
-  const hint =
-    !selectedFlow
-      ? "选中草稿后，确认步骤无误再标成用例。"
-      : selectedFlow.status === "draft"
-        ? "确认后状态从草稿变为用例。跑成功不会自动确认。"
-        : `当前是${flowStatusText(selectedFlow.status)}。用例不能删除，要改或删先退回草稿。`;
-
   return (
-    <div className="run-foot">
+    <div className="run-foot compact">
       <div className="run-foot-section">
         <div className="run-foot-section-title">执行</div>
-        <div className="run-foot-options">
+        <div className="run-foot-options row">
           <Switch
-            label="开窗执行"
+            label="开窗"
             checked={ctx.headed}
             onChange={(event) => ctx.setHeaded(event.target.checked)}
           />
           <Switch
-            label="演练（跳过写数据）"
+            label="演练"
             checked={ctx.dryRun}
             onChange={(event) => ctx.setDryRun(event.target.checked)}
           />
@@ -260,8 +253,7 @@ export function RunSidebarFoot({
         </div>
       </div>
 
-      <div className="run-foot-section">
-        <div className="run-foot-section-title">用例</div>
+      <div className="run-foot-section secondary">
         <div className="run-foot-actions">
           <Button
             variant="ghost"
@@ -273,6 +265,13 @@ export function RunSidebarFoot({
           <Button
             variant={promoteVariant === "warn" ? "warn" : "ghost"}
             disabled={!selectedFlow}
+            title={
+              !selectedFlow
+                ? "选中草稿后确认步骤，再标成用例"
+                : selectedFlow.status === "draft"
+                  ? "确认后从草稿变为用例"
+                  : `当前是${flowStatusText(selectedFlow.status)}；要改或删先退回草稿`
+            }
             onClick={() => {
               if (!selectedFlow) return;
               const toDraft = selectedFlow.status !== "draft";
@@ -289,8 +288,6 @@ export function RunSidebarFoot({
             {promoteLabel}
           </Button>
         </div>
-        <FootHint>{hint}</FootHint>
-        <FootHint>右键用例可配置前置流程。</FootHint>
       </div>
 
       <PromptModal

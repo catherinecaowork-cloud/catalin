@@ -50,7 +50,7 @@ export function RecordEnvPicker({
             <span className="record-env-name">{siteEnvLabel(selected)}</span>
           </>
         ) : (
-          <span className="record-env-name muted">Environment</span>
+          <span className="record-env-name muted">选择环境</span>
         )}
         <ChevronDown size={14} strokeWidth={2} aria-hidden className="record-env-chevron" />
       </button>

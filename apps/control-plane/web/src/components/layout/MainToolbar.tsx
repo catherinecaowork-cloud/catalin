@@ -1,4 +1,4 @@
-import { CircleDot, Pause, Play, Square, Terminal } from "lucide-react";
+import { CircleDot, Pause, Play, Square } from "lucide-react";
 import { useState } from "react";
 
 import { useRecordContext } from "../../context/RecordContext";
@@ -14,27 +14,17 @@ type Props = {
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onLaunchRecord: () => void;
   onOpenRun: () => void;
-  onToggleLog: () => void;
-  logOpen: boolean;
 };
 
-export function MainToolbar({
-  sitesState,
-  onLog,
-  onLaunchRecord,
-  onOpenRun,
-  onToggleLog,
-  logOpen,
-}: Props) {
+export function MainToolbar({ sitesState, onLog, onLaunchRecord, onOpenRun }: Props) {
   const record = useRecordContext();
   const recording = record.stage === "busy";
   // 「当前环境」是工作区级状态：explorer / 执行 / 历史 / 录制默认值都跟着它走。
-  // 切换入口放在常驻顶栏，不必再借道录制弹窗。
   const [envManageOpen, setEnvManageOpen] = useState(false);
 
   return (
     <div className="main-toolbar titlebar-toolbar" role="toolbar" aria-label="主操作">
-      <div className="main-toolbar-group">
+      <div className="main-toolbar-group primary">
         <div className="main-toolbar-env">
           <RecordEnvPicker
             sites={sitesState.sites}
@@ -44,9 +34,11 @@ export function MainToolbar({
           />
         </div>
 
+        <span className="main-toolbar-sep" aria-hidden />
+
         <button
           type="button"
-          className={cn("main-toolbar-btn", "record", recording && "busy")}
+          className={cn("main-toolbar-action", "record", recording && "busy")}
           title={recording ? "结束录制" : "录制 Web"}
           aria-label={recording ? "结束录制" : "录制 Web"}
           onClick={() => {
@@ -59,54 +51,45 @@ export function MainToolbar({
         >
           <span className="main-toolbar-icon">
             {recording ? (
-              <Square size={14} strokeWidth={2} aria-hidden />
+              <Square size={13} strokeWidth={2} aria-hidden />
             ) : (
-              <CircleDot size={15} strokeWidth={2} aria-hidden />
+              <CircleDot size={14} strokeWidth={2} aria-hidden />
             )}
             {!recording ? <span className="main-toolbar-rec-dot" aria-hidden /> : null}
           </span>
+          <span className="main-toolbar-label">{recording ? "结束" : "录制"}</span>
         </button>
 
         {recording ? (
           <button
             type="button"
-            className={cn("main-toolbar-btn", record.recordPaused && "active")}
+            className={cn("main-toolbar-action", "ghost", record.recordPaused && "active")}
             title={record.recordPaused ? "继续录制" : "暂停录制"}
             aria-label={record.recordPaused ? "继续录制" : "暂停录制"}
             onClick={() => void record.toggleRecordPause()}
           >
             <span className="main-toolbar-icon">
               {record.recordPaused ? (
-                <Play size={14} strokeWidth={2} aria-hidden />
+                <Play size={13} strokeWidth={2} aria-hidden />
               ) : (
-                <Pause size={14} strokeWidth={2} aria-hidden />
+                <Pause size={13} strokeWidth={2} aria-hidden />
               )}
             </span>
+            <span className="main-toolbar-label">{record.recordPaused ? "继续" : "暂停"}</span>
           </button>
         ) : null}
 
         <button
           type="button"
-          className="main-toolbar-btn run"
+          className="main-toolbar-action run"
           title="运行"
           aria-label="运行"
           onClick={onOpenRun}
         >
           <span className="main-toolbar-icon">
-            <Play size={14} strokeWidth={2} aria-hidden />
+            <Play size={13} strokeWidth={2} aria-hidden />
           </span>
-        </button>
-
-        <button
-          type="button"
-          className={cn("main-toolbar-btn", logOpen && "active")}
-          title={logOpen ? "收起底栏" : "展开底栏"}
-          aria-label={logOpen ? "收起底栏" : "展开底栏"}
-          onClick={onToggleLog}
-        >
-          <span className="main-toolbar-icon">
-            <Terminal size={14} strokeWidth={2} aria-hidden />
-          </span>
+          <span className="main-toolbar-label">运行</span>
         </button>
       </div>
 

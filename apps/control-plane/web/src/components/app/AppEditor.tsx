@@ -24,6 +24,7 @@ type Props = {
   onOpenRecord: () => void;
   onOpenRunModule: () => void;
   onOpenHistory: () => void;
+  onOpenRunRecord: (runId: string, title: string) => void;
   onLog: (message: string, level?: "info" | "warn" | "error") => void;
   onFollowBatch: (runId: string, title: string) => void;
   onRunEnd?: () => void;
@@ -93,6 +94,7 @@ export function AppEditor({
   onOpenRecord,
   onOpenRunModule,
   onOpenHistory,
+  onOpenRunRecord,
   onLog,
   onFollowBatch,
   onRunEnd,
@@ -104,6 +106,7 @@ export function AppEditor({
           onOpenRecord={onOpenRecord}
           onOpenRun={onOpenRunModule}
           onOpenHistory={onOpenHistory}
+          onOpenRunRecord={onOpenRunRecord}
         />
       );
     }

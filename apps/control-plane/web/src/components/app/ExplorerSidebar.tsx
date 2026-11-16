@@ -186,7 +186,7 @@ export function ExplorerSidebar({
         body={
           <SidebarBody explorer>
             {!ctx.siteId ? (
-              <EmptyState>先在顶栏选择或添加站点。</EmptyState>
+              <EmptyState>等待环境…</EmptyState>
             ) : (
               <ExplorerTree
                 nodes={nodes}
@@ -201,11 +201,13 @@ export function ExplorerSidebar({
           </SidebarBody>
         }
         foot={
-          ctx.siteId ? (
-            <SidebarFoot>
+          <SidebarFoot>
+            {ctx.siteId ? (
               <RunSidebarFootActions onOpenRun={onOpenRun} />
-            </SidebarFoot>
-          ) : undefined
+            ) : (
+              <p className="side-actions-hint">在顶栏选择环境后，可在此运行用例。</p>
+            )}
+          </SidebarFoot>
         }
       />
       <ImportFlowsModal open={importOpen} onClose={() => setImportOpen(false)} />
