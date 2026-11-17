@@ -823,10 +823,52 @@ def _panel_option_text(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _action_click_name(event: dict[str, Any]) -> str | None:
+    """保存/确定等动作按钮优先用自身文案，不被残留 trigger_css 字段名盖住。"""
+    target = event.get("target") or {}
+    candidates = target.get("candidates") or []
+    text = str(event.get("text") or "").strip()
+    values = " ".join(str(c.get("value") or "") for c in candidates)
+    if not _is_action_control(candidates, values, text):
+        return None
+
+    names: list[str] = []
+    if text:
+        names.append(text)
+    fingerprint = target.get("fingerprint")
+    if isinstance(fingerprint, dict):
+        for key in ("text", "name"):
+            value = str(fingerprint.get(key) or "").strip()
+            if value:
+                names.append(value)
+    for candidate in candidates:
+        kind = candidate.get("kind")
+        if kind in {"text", "label"}:
+            value = str(candidate.get("value") or "").strip()
+            if value:
+                names.append(value)
+        elif kind == "role" and candidate.get("name"):
+            names.append(str(candidate["name"]).strip())
+
+    modal = _modal_scope_name(event)
+    for name in names:
+        if not name or name in _NOISE_CLICK_TEXT:
+            continue
+        if name.lower() in _ICON_CLICK_NAMES:
+            continue
+        if modal and name == modal:
+            continue
+        return "加号" if name.lower() == "plus" else name
+    return None
+
+
 def _click_name(event: dict[str, Any]) -> str:
     placeholder = _placeholder_click_label(event)
     if placeholder:
         return placeholder
+    action_name = _action_click_name(event)
+    if action_name:
+        return action_name
     modal = _modal_scope_name(event)
     target = event.get("target") or {}
     candidates = target.get("candidates") or []
@@ -885,6 +927,50 @@ def _click_name(event: dict[str, Any]) -> str:
     return "元素"
 
 
+def _strip_stale_combo_meta(event: dict[str, Any]) -> dict[str, Any]:
+    """动作按钮上的 trigger_css 多半是上一次下拉残留，会污染标签与回放。"""
+    target = event.get("target")
+    if not isinstance(target, dict) or not target.get("trigger_css"):
+        return event
+    candidates = target.get("candidates") or []
+    text = str(event.get("text") or "").strip()
+    values = " ".join(str(c.get("value") or "") for c in candidates)
+    if not _is_action_control(candidates, values, text):
+        return event
+    cleaned = dict(event)
+    next_target = dict(target)
+    next_target.pop("trigger_css", None)
+    cleaned["target"] = next_target
+    context = cleaned.get("context")
+    if isinstance(context, dict) and context.get("trigger_css"):
+        next_context = dict(context)
+        next_context.pop("trigger_css", None)
+        cleaned["context"] = next_context
+    return cleaned
+
+
+def _click_is_mutating(event: dict[str, Any], name: str) -> bool:
+    if _is_mutating(name):
+        return True
+    if _is_mutating(str(event.get("text") or "")):
+        return True
+    target = event.get("target") or {}
+    for candidate in target.get("candidates") or []:
+        if candidate.get("kind") in {"text", "label"} and _is_mutating(
+            str(candidate.get("value") or "")
+        ):
+            return True
+        if candidate.get("kind") == "role" and _is_mutating(str(candidate.get("name") or "")):
+            return True
+    fingerprint = target.get("fingerprint")
+    if isinstance(fingerprint, dict):
+        if _is_mutating(str(fingerprint.get("text") or "")) or _is_mutating(
+            str(fingerprint.get("name") or "")
+        ):
+            return True
+    return False
+
+
 def _is_mutating(name: str) -> bool:
     lowered = name.lower()
     return any(word.lower() in lowered for word in _MUTATING_WORDS)
@@ -924,6 +1010,8 @@ def _prefilter(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list
             continue
         if _is_ephemeral_scroll(event):
             continue
+        if event.get("type") == "click":
+            event = _strip_stale_combo_meta(event)
         kept.append(event)
 
     filtered: list[dict[str, Any]] = []
@@ -1011,7 +1099,7 @@ def compile_events(
                     "action": "click",
                     "target": _prioritize_click_candidates(event["target"], event),
                     "label": f"{where}点击「{name}」",
-                    "mutating": _is_mutating(name),
+                    "mutating": _click_is_mutating(event, name),
                     **_optional_fields(event),
                 }
             )

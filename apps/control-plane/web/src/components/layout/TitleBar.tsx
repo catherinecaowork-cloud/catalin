@@ -10,9 +10,7 @@ export function TitleBar({ toolbar, tabs, status }: Props) {
   return (
     <header className="titlebar">
       <div className="brand" title="Catalin">
-        <span className="brand-mark" aria-hidden>
-          C
-        </span>
+        <img className="brand-mark" src="/favicon.svg" width={18} height={18} alt="" />
         <span className="brand-name">Catalin</span>
       </div>
       {toolbar}

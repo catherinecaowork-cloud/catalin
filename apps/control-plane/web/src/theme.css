@@ -92,16 +92,10 @@ body {
 .brand-mark {
   width: 18px;
   height: 18px;
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #2e7d32;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0;
+  border-radius: 4px;
+  display: block;
   flex: none;
+  object-fit: contain;
 }
 
 .brand-name {
@@ -1237,15 +1231,10 @@ body {
 .start-page-brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #2e7d32;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
+  border-radius: 6px;
+  display: block;
   flex: none;
+  object-fit: contain;
 }
 
 .start-page-hero h2 {

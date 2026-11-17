@@ -42,9 +42,7 @@ export function StartPage({ onOpenRecord, onOpenRun, onOpenHistory, onOpenRunRec
     <div className="editor-empty start-page">
       <div className="start-page-hero">
         <div className="start-page-brand">
-          <span className="start-page-brand-mark" aria-hidden>
-            C
-          </span>
+          <img className="start-page-brand-mark" src="/favicon.svg" width={28} height={28} alt="" />
           <div>
             <h2>Catalin</h2>
             <p className="muted">自动化测试工作台</p>

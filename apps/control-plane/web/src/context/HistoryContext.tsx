@@ -10,6 +10,8 @@ import {
 } from "react";
 
 import { api } from "../api/client";
+import { ConfirmModal } from "../components/patterns/ConfirmModal";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import type { RunRecord } from "../types";
 import { kindText } from "../utils/kind";
 import { statusText } from "../utils/flow";
@@ -54,6 +56,7 @@ export function HistoryProvider({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const anchorIdRef = useRef<string | null>(null);
+  const { ask, confirmProps } = useConfirmDialog();
 
   const isBusy = useCallback(
     (run: RunRecord) => ["queued", "leased", "running"].includes(run.status),
@@ -128,22 +131,28 @@ export function HistoryProvider({
   const deleteSelected = useCallback(async () => {
     const ids = [...selected];
     if (!ids.length) return;
-    if (!window.confirm(`删除选中的 ${ids.length} 条记录？截图和事件会一起清掉，不可恢复。`)) {
-      return;
-    }
-    try {
-      const result = await api<{ deleted?: string[]; skipped?: string[] }>(
-        "/api/v1/history/purge",
-        { method: "POST", body: JSON.stringify({ ids }) },
-      );
-      const gone = result.deleted?.length ?? 0;
-      const skip = result.skipped?.length ?? 0;
-      onLog(`已删除 ${gone} 条` + (skip ? `，跳过 ${skip} 条` : ""));
-      await refresh();
-    } catch (err) {
-      onLog(`删除失败：${err instanceof Error ? err.message : String(err)}`, "error");
-    }
-  }, [selected, onLog, refresh]);
+    ask({
+      title: "删除运行记录",
+      message: `删除选中的 ${ids.length} 条记录？截图和事件会一起清掉，不可恢复。`,
+      variant: "danger",
+      confirmLabel: "删除",
+      onConfirm: async () => {
+        try {
+          const result = await api<{ deleted?: string[]; skipped?: string[] }>(
+            "/api/v1/history/purge",
+            { method: "POST", body: JSON.stringify({ ids }) },
+          );
+          const gone = result.deleted?.length ?? 0;
+          const skip = result.skipped?.length ?? 0;
+          onLog(`已删除 ${gone} 条` + (skip ? `，跳过 ${skip} 条` : ""));
+          await refresh();
+        } catch (err) {
+          onLog(`删除失败：${err instanceof Error ? err.message : String(err)}`, "error");
+          throw err;
+        }
+      },
+    });
+  }, [selected, ask, onLog, refresh]);
 
   const value = useMemo<HistoryContextValue>(
     () => ({
@@ -172,5 +181,10 @@ export function HistoryProvider({
     ],
   );
 
-  return <HistoryContext.Provider value={value}>{children}</HistoryContext.Provider>;
+  return (
+    <HistoryContext.Provider value={value}>
+      {children}
+      <ConfirmModal {...confirmProps} />
+    </HistoryContext.Provider>
+  );
 }
