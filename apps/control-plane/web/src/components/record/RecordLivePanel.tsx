@@ -85,9 +85,14 @@ export function RecordLivePanel() {
           <Button variant="ghost" onClick={() => void ctx.toggleRecordPause()}>
             {ctx.recordPaused ? "继续" : "暂停"}
           </Button>
-          <Button variant="warn" className="record-live-stop" onClick={() => void ctx.stopRecord()}>
+          <Button
+            variant="warn"
+            className="record-live-stop"
+            disabled={ctx.waitingHint.startsWith("正在结束录制")}
+            onClick={() => void ctx.stopRecord()}
+          >
             <Square size={12} strokeWidth={2} aria-hidden />
-            停止
+            {ctx.waitingHint.startsWith("正在结束录制") ? "停止中…" : "停止"}
           </Button>
         </div>
       </header>

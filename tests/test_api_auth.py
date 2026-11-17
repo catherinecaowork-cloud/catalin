@@ -106,6 +106,46 @@ def test_bootstrap_loopback_returns_token(auth_env) -> None:
     assert body["api_token"] == settings.api_token
 
 
+def test_recording_stop_requires_api_token(auth_env) -> None:
+    """录制旁路面板也必须带 Token；匿名 stop 会 401，旧 dock 会卡在「停止中…」。"""
+    client, _ = auth_env
+    from autotest_control.db import session_scope
+    from autotest_control.deps import new_id, now
+    from autotest_control.models import Run, Site
+
+    with session_scope() as session:
+        site = Site(
+            id=new_id(),
+            tenant_id="default",
+            project_id="default",
+            name="s",
+            base_url="https://example.com",
+            env="test",
+            adapter="generic",
+        )
+        session.add(site)
+        run = Run(
+            id=new_id(),
+            tenant_id="default",
+            project_id="default",
+            site_id=site.id,
+            kind="record",
+            status="running",
+            job={"record_intent": "demo"},
+            created_at=now(),
+        )
+        session.add(run)
+        session.commit()
+        run_id = run.id
+
+    denied = client.post(f"/api/v1/recordings/{run_id}/stop")
+    assert denied.status_code == 401
+
+    ok = client.post(f"/api/v1/recordings/{run_id}/stop", headers=_auth_headers())
+    assert ok.status_code == 200
+    assert ok.json()["ok"] is True
+
+
 def test_worker_register_without_code_denied(auth_env) -> None:
     client, _ = auth_env
     response = client.post(
