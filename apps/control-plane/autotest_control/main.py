@@ -63,9 +63,36 @@ def create_app() -> FastAPI:
             )
         return FileResponse(index)
 
+    def _icon_file(name: str) -> Path:
+        for base in (_STATIC_DIR / "dist", _STATIC_DIR):
+            path = base / name
+            if path.is_file():
+                return path
+        raise HTTPException(status_code=404, detail=f"缺少图标 {name}")
+
     @app.get("/favicon.ico")
     def favicon() -> FileResponse:
-        return FileResponse(_STATIC_DIR / "favicon.ico")
+        return FileResponse(_icon_file("favicon.ico"))
+
+    @app.get("/favicon.svg")
+    def favicon_svg() -> FileResponse:
+        return FileResponse(_icon_file("favicon.svg"), media_type="image/svg+xml")
+
+    @app.get("/favicon-16.png")
+    def favicon_16() -> FileResponse:
+        return FileResponse(_icon_file("favicon-16.png"), media_type="image/png")
+
+    @app.get("/favicon-32.png")
+    def favicon_32() -> FileResponse:
+        return FileResponse(_icon_file("favicon-32.png"), media_type="image/png")
+
+    @app.get("/favicon-48.png")
+    def favicon_48() -> FileResponse:
+        return FileResponse(_icon_file("favicon-48.png"), media_type="image/png")
+
+    @app.get("/apple-touch-icon.png")
+    def apple_touch_icon() -> FileResponse:
+        return FileResponse(_icon_file("apple-touch-icon.png"), media_type="image/png")
 
     return app
 
