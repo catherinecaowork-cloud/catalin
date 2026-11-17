@@ -237,36 +237,59 @@ export function RecordProvider({
 
   const pollCompilation = useCallback(
     async (runId: string, token: number) => {
-      for (let i = 0; i < 2400; i++) {
+      // 最长约 90s：缺网关或编译卡住时 fail-soft 到确定性步骤，避免永远停在「编译中」。
+      for (let i = 0; i < 90; i++) {
         if (pollTokenRef.current !== token) return;
-        const state = await api<Compilation>(`/api/v1/recordings/${runId}/compilation`);
-        setCompilation(state);
-        const label = compileStatusLabel(
-          state.status,
-          state.attempt,
-          state.max_attempts,
-          state.compile_mode,
-        );
-        setCompilePath(compilePathLabel(state.compile_mode));
-        const tokenUsage = state.usage?.output_tokens
-          ? `（输入 ${state.usage.input_tokens ?? 0} / 输出 ${state.usage.output_tokens} tokens）`
-          : "";
-        setCompileMessage(label + tokenUsage + (state.error ? `：${state.error}` : ""));
-        setCompileError(["fallback", "error"].includes(state.status));
+        try {
+          const state = await api<Compilation>(`/api/v1/recordings/${runId}/compilation`);
+          setCompilation(state);
+          const label = compileStatusLabel(
+            state.status,
+            state.attempt,
+            state.max_attempts,
+            state.compile_mode,
+          );
+          setCompilePath(compilePathLabel(state.compile_mode));
+          const tokenUsage = state.usage?.output_tokens
+            ? `（输入 ${state.usage.input_tokens ?? 0} / 输出 ${state.usage.output_tokens} tokens）`
+            : "";
+          setCompileMessage(label + tokenUsage + (state.error ? `：${state.error}` : ""));
+          setCompileError(["fallback", "error"].includes(state.status));
 
-        if (
-          ["passed", "manual_validation", "fallback", "error"].includes(state.status)
-        ) {
-          renderDraft(runId, summaryRef.current ?? {}, state);
           if (
-            state.error &&
-            /AI 未配置|ai_configuration_missing|缺少配置/.test(state.error)
+            ["passed", "manual_validation", "fallback", "error"].includes(state.status)
           ) {
-            onRequestAiConfig();
+            renderDraft(runId, summaryRef.current ?? {}, state);
+            if (
+              state.error &&
+              /AI 未配置|ai_configuration_missing|缺少配置/.test(state.error)
+            ) {
+              onRequestAiConfig();
+            }
+            return;
           }
-          return;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          setCompileMessage(`编译状态读取失败：${message}`);
+          setCompileError(true);
+          if (i >= 5) {
+            renderDraft(runId, summaryRef.current ?? {}, null);
+            return;
+          }
         }
         await sleep(1000);
+      }
+      setCompileMessage("AI 编译超时，已回退到确定性步骤。可稍后点「重新编译」。");
+      setCompileError(true);
+      try {
+        const fallback = await api<Compilation>(
+          `/api/v1/recordings/${runId}/compilation/use-fallback`,
+          { method: "POST" },
+        );
+        setCompilation(fallback);
+        renderDraft(runId, summaryRef.current ?? {}, fallback);
+      } catch {
+        renderDraft(runId, summaryRef.current ?? {}, null);
       }
     },
     [onRequestAiConfig, renderDraft],
@@ -316,30 +339,45 @@ export function RecordProvider({
 
   const pollRecording = useCallback(
     async (runId: string, token: number) => {
+      let consecutiveErrors = 0;
       for (let i = 0; i < 2000; i++) {
         if (pollTokenRef.current !== token) return;
-        const state = await api<{
-          status: string;
-          summary: RecordingSummary;
-          paused?: boolean;
-          event_count: number;
-          live_actions?: RecordLiveAction[];
-          observation_model?: { entries?: PageWidgetEntry[] };
-          recognized_count?: number;
-        }>(`/api/v1/recordings/${runId}`);
-        setEventCount(state.event_count ?? 0);
-        setRecordPaused(!!state.paused);
-        setLiveActions(Array.isArray(state.live_actions) ? state.live_actions : []);
-        setObservedEntries(state.observation_model?.entries ?? []);
-        updateWaitingHint(state.status);
-        if (state.status === "passed") {
-          await beginCompile(state.summary ?? {}, runId, token);
-          return;
-        }
-        if (state.status === "failed" || state.status === "error") {
-          setStage("idle");
-          onLog(state.summary?.error ?? "录制失败", "error");
-          return;
+        try {
+          const state = await api<{
+            status: string;
+            summary: RecordingSummary;
+            paused?: boolean;
+            event_count: number;
+            live_actions?: RecordLiveAction[];
+            observation_model?: { entries?: PageWidgetEntry[] };
+            recognized_count?: number;
+          }>(`/api/v1/recordings/${runId}`);
+          consecutiveErrors = 0;
+          setEventCount(state.event_count ?? 0);
+          setRecordPaused(!!state.paused);
+          setLiveActions(Array.isArray(state.live_actions) ? state.live_actions : []);
+          setObservedEntries(state.observation_model?.entries ?? []);
+          if (state.status === "running" || state.status === "leased" || state.status === "queued") {
+            updateWaitingHint(state.status);
+          }
+          if (state.status === "passed") {
+            await beginCompile(state.summary ?? {}, runId, token);
+            return;
+          }
+          if (state.status === "failed" || state.status === "error") {
+            setStage("idle");
+            onLog(state.summary?.error ?? "录制失败", "error");
+            return;
+          }
+        } catch (err) {
+          consecutiveErrors += 1;
+          const message = err instanceof Error ? err.message : String(err);
+          setWaitingHint(`同步录制状态失败，重试中…（${message}）`);
+          if (consecutiveErrors >= 30) {
+            setStage("idle");
+            onLog(`录制状态同步连续失败：${message}`, "error");
+            return;
+          }
         }
         await sleep(1000);
       }
@@ -414,11 +452,14 @@ export function RecordProvider({
       return;
     }
     onLog("正在结束录制…");
+    setWaitingHint("正在结束录制…");
     try {
       await api(`/api/v1/recordings/${recordRunId}/stop`, { method: "POST" });
       setRecordPaused(false);
     } catch (err) {
-      onLog(err instanceof Error ? err.message : String(err), "error");
+      const message = err instanceof Error ? err.message : String(err);
+      setWaitingHint(`结束录制失败：${message}`);
+      onLog(message, "error");
     }
   }, [recordRunId, onLog]);
 
