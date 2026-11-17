@@ -10,6 +10,8 @@ import {
 } from "react";
 
 import { api } from "../api/client";
+import { ConfirmModal } from "../components/patterns/ConfirmModal";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import type {
   Compilation,
   Credential,
@@ -153,6 +155,7 @@ export function RecordProvider({
   const [saveHint, setSaveHint] = useState("");
   const summaryRef = useRef<RecordingSummary | null>(null);
   const pollTokenRef = useRef(0);
+  const { ask, confirmProps } = useConfirmDialog();
 
   const headedOnline = workers.some(
     (worker) => worker.online && worker.labels?.includes("headed"),
@@ -720,11 +723,6 @@ export function RecordProvider({
       return;
     }
     const verified = Boolean(compilation?.verified) && !draftDirty;
-    let allowUnverified = false;
-    if (!verified) {
-      allowUnverified = window.confirm("当前步骤未通过自动回放验证。是否仍以 draft 保存？");
-      if (!allowUnverified) return;
-    }
     const verifiedObserver =
       !draftDirty &&
       Boolean(compilation?.verified) &&
@@ -733,32 +731,47 @@ export function RecordProvider({
       ? normalizeSteps(compilation!.observer_steps!)
       : draftSteps;
 
-    setSaveHint("正在保存…");
-    try {
-      const result = await api<{ flow_id: string; flow_name: string }>(
-        `/api/v1/recordings/${recordRunId}/save`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: flowName.trim() || "未命名录制",
-            steps: stepsToSave,
-            allow_unverified: allowUnverified,
-          }),
-        },
-      );
-      setSaveHint(`已保存：${result.flow_name}。建议立刻开窗回放验证一次。`);
-      onLog(`已保存流程 ${result.flow_name}`);
-      if (recordSiteId) {
-        onFlowSaved?.({
-          siteId: recordSiteId,
-          flowId: result.flow_id,
-          flowName: result.flow_name,
-        });
+    const persist = async (allowUnverified: boolean) => {
+      setSaveHint("正在保存…");
+      try {
+        const result = await api<{ flow_id: string; flow_name: string }>(
+          `/api/v1/recordings/${recordRunId}/save`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: flowName.trim() || "未命名录制",
+              steps: stepsToSave,
+              allow_unverified: allowUnverified,
+            }),
+          },
+        );
+        setSaveHint(`已保存：${result.flow_name}。建议立刻开窗回放验证一次。`);
+        onLog(`已保存流程 ${result.flow_name}`);
+        if (recordSiteId) {
+          onFlowSaved?.({
+            siteId: recordSiteId,
+            flowId: result.flow_id,
+            flowName: result.flow_name,
+          });
+        }
+        resetRecord();
+      } catch (err) {
+        setSaveHint(`保存失败：${err instanceof Error ? err.message : String(err)}`);
+        throw err;
       }
-      resetRecord();
-    } catch (err) {
-      setSaveHint(`保存失败：${err instanceof Error ? err.message : String(err)}`);
+    };
+
+    if (!verified) {
+      ask({
+        title: "以 draft 保存？",
+        message: "当前步骤未通过自动回放验证。是否仍以 draft 保存？",
+        variant: "warn",
+        confirmLabel: "仍要保存",
+        onConfirm: () => persist(true),
+      });
+      return;
     }
+    await persist(false);
   }, [
     recordRunId,
     draftSteps,
@@ -766,6 +779,7 @@ export function RecordProvider({
     draftDirty,
     flowName,
     normalizeSteps,
+    ask,
     onLog,
     onFlowSaved,
     recordSiteId,
@@ -873,5 +887,10 @@ export function RecordProvider({
     ],
   );
 
-  return <RecordContext.Provider value={value}>{children}</RecordContext.Provider>;
+  return (
+    <RecordContext.Provider value={value}>
+      {children}
+      <ConfirmModal {...confirmProps} />
+    </RecordContext.Provider>
+  );
 }
