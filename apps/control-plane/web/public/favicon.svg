@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Catalin">
+  <!-- Catalin mark: deep forest tile + geometric C + run chevron. Tuned for 16–32px. -->
+  <rect width="32" height="32" rx="7" fill="#14532D"/>
+  <path
+    d="M23.2 8.6c-1.45-1.05-3.3-1.7-5.35-1.7C12.05 6.9 8 11.05 8 16s4.05 9.1 9.85 9.1c2.05 0 3.9-.65 5.35-1.7"
+    fill="none"
+    stroke="#F4FBF6"
+    stroke-width="3.6"
+    stroke-linecap="round"
+  />
+  <path d="M18.1 12.05 L25.1 16 L18.1 19.95 Z" fill="#86EFAC"/>
+</svg>

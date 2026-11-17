@@ -212,6 +212,8 @@
     lastClickTs = now;
     const portal = inDropdown(el);
     const context = contextOf(el);
+    // 普通点击（含弹窗「保存/确定」）不要继承上一次下拉的 trigger_css，
+    // 否则编译器会把按钮错标成「国家/地区」这类字段名。
     const extra = portal
       ? {
           context,
@@ -219,7 +221,7 @@
           widget: lastComboInfo.widget,
           trigger_css: lastComboInfo.trigger_css,
         }
-      : { context };
+      : { context, inheritCombo: false };
     let target = decorateTarget(el, describe(el), extra);
     if (!target) {
       const label = (context && context.label) || text || el.getAttribute?.('placeholder') || el.tagName;
@@ -227,7 +229,16 @@
         candidates: [{ kind: 'text', value: String(label || 'element') }],
       };
     }
-    if (portal) rememberCombo(target, context);
+    if (portal) {
+      rememberCombo(target, context);
+    } else if (isClosingAction(el) || isActionControl(el)) {
+      // 关层/主按钮后清掉下拉残留，避免后续非 combo 点击再被污染
+      lastComboInfo = { widget: null, panel: null, trigger_css: null };
+      if (target.trigger_css) {
+        target = { ...target };
+        delete target.trigger_css;
+      }
+    }
     if (el.matches && el.matches('.el-tabs__item')) {
       lastPaneTabKey = el.id || text;
     }

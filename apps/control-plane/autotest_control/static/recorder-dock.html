@@ -261,6 +261,58 @@
       const hintEl = document.getElementById("hint");
       urlInput.value = startUrl;
       let recordingPaused = false;
+      let apiToken = "";
+      let stopWatchdog = null;
+      const STOP_TIMEOUT_MS = 45000;
+
+      async function ensureApiToken() {
+        if (apiToken) return apiToken;
+        try {
+          const res = await fetch("/api/v1/auth/bootstrap");
+          if (!res.ok) return "";
+          const body = await res.json();
+          if (body && body.api_token) {
+            apiToken = String(body.api_token);
+          }
+        } catch (err) {
+          /* loopback bootstrap 失败时后续写请求会明确报错 */
+        }
+        return apiToken;
+      }
+
+      async function authHeaders(extra) {
+        const token = await ensureApiToken();
+        const headers = Object.assign({ "Content-Type": "application/json" }, extra || {});
+        if (token) headers["X-API-Token"] = token;
+        return headers;
+      }
+
+      function clearStopWatchdog() {
+        if (stopWatchdog) {
+          window.clearTimeout(stopWatchdog);
+          stopWatchdog = null;
+        }
+      }
+
+      function markStopPending() {
+        stopBtn.disabled = true;
+        stopBtn.textContent = "停止中…";
+        clearStopWatchdog();
+        stopWatchdog = window.setTimeout(() => {
+          if (stopBtn.textContent !== "停止中…") return;
+          stopBtn.disabled = false;
+          stopBtn.textContent = "停止";
+          statusEl.textContent =
+            "结束超时：未收到完成状态。请确认 Worker 在线后重试，或到控制台点「结束录制」。";
+        }, STOP_TIMEOUT_MS);
+      }
+
+      function markStopped(label) {
+        clearStopWatchdog();
+        stopBtn.disabled = true;
+        stopBtn.textContent = label || "已结束";
+        if (pauseBtn) pauseBtn.disabled = true;
+      }
 
       const ACTION_LABELS = {
         click: "Click",
@@ -433,7 +485,8 @@
         try {
           const res = await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}`);
           if (!res.ok) {
-            statusEl.textContent = "无法同步录制状态";
+            statusEl.textContent = `无法同步录制状态（${res.status}），重试中…`;
+            window.setTimeout(poll, 1000);
             return;
           }
           const data = await res.json();
@@ -445,22 +498,22 @@
           const eventCount = Number(data.event_count || 0);
           const stepCount = liveSteps.length || liveActions.length;
           const debugTypes = Array.isArray(data.debug_types) ? data.debug_types.join(", ") : "";
-          if (status === "queued" || status === "running") {
-            const prefix = data.paused ? "已暂停" : "录制中…";
-            statusEl.textContent = debugTypes
-              ? `${prefix} 原始 ${eventCount} · 步骤 ${stepCount} · 最近类型 ${debugTypes}`
-              : `${prefix} 已采集 ${eventCount} 个原始事件，${stepCount} 条步骤`;
+          if (status === "queued" || status === "running" || status === "leased") {
+            if (stopBtn.textContent === "停止中…") {
+              statusEl.textContent = "正在结束录制…";
+            } else {
+              const prefix = data.paused ? "已暂停" : "录制中…";
+              statusEl.textContent = debugTypes
+                ? `${prefix} 原始 ${eventCount} · 步骤 ${stepCount} · 最近类型 ${debugTypes}`
+                : `${prefix} 已采集 ${eventCount} 个原始事件，${stepCount} 条步骤`;
+            }
           } else if (status === "passed") {
             statusEl.textContent = "录制已结束，正在整理步骤…";
           } else {
             statusEl.textContent = `状态：${status}`;
           }
           if (["passed", "failed", "error"].includes(status)) {
-            stopBtn.disabled = true;
-            stopBtn.textContent = "已结束";
-            if (pauseBtn) {
-              pauseBtn.disabled = true;
-            }
+            markStopped(status === "passed" ? "已结束" : "已终止");
             return;
           }
         } catch (err) {
@@ -476,10 +529,13 @@
         try {
           const res = await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}/${endpoint}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authHeaders(),
           });
           if (!res.ok) {
-            statusEl.textContent = recordingPaused ? "继续失败，请重试" : "暂停失败，请重试";
+            const detail = await res.text();
+            statusEl.textContent = recordingPaused
+              ? `继续失败（${res.status}）`
+              : `暂停失败（${res.status}）${detail ? "：" + detail.slice(0, 80) : ""}`;
             return;
           }
           syncPausedUi(!recordingPaused);
@@ -493,15 +549,30 @@
 
       stopBtn.addEventListener("click", async () => {
         if (!runId || stopBtn.disabled) return;
-        stopBtn.disabled = true;
-        stopBtn.textContent = "停止中…";
+        markStopPending();
         try {
-          await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}/stop`, {
+          const res = await fetch(`/api/v1/recordings/${encodeURIComponent(runId)}/stop`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await authHeaders(),
           });
+          if (!res.ok) {
+            clearStopWatchdog();
+            stopBtn.disabled = false;
+            stopBtn.textContent = "停止";
+            let detail = "";
+            try {
+              detail = (await res.json()).detail || "";
+            } catch (err) {
+              detail = "";
+            }
+            statusEl.textContent = detail
+              ? `停止失败（${res.status}）：${detail}`
+              : `停止失败（${res.status}），请重试`;
+            return;
+          }
           statusEl.textContent = "正在结束录制…";
         } catch (err) {
+          clearStopWatchdog();
           stopBtn.disabled = false;
           stopBtn.textContent = "停止";
           statusEl.textContent = "停止失败，请重试";
@@ -509,6 +580,7 @@
       });
 
       render([], []);
+      void ensureApiToken();
       poll();
     </script>
   </body>
